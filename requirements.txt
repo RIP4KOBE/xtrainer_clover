@@ -1,0 +1,25 @@
+# keep in alphabetical order
+dm_control
+Pillow
+pygame
+PyQt6
+pyrealsense2
+pure-python-adb
+tyro
+zmq
+termcolor
+
+pyquaternion
+pyyaml
+rospkg
+pexpect
+mujoco==2.3.7
+dm_control==1.0.14
+opencv-python
+matplotlib
+einops
+packaging
+h5py
+ipython
+
+
