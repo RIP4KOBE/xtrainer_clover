@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Dict
 
 import numpy as np
+import cv2
+
 
 
 def save_frame(
@@ -21,6 +23,30 @@ def save_frame(
 
     with open(recorded_file, "wb") as f:
         pickle.dump(obs, f)
+
+def save_dp_frame(
+    folder: Path,
+    timestamp: datetime.datetime,
+    obs: Dict[str, np.ndarray],
+    action: np.ndarray,
+    activated=True,
+    save_png=False,
+) -> None:
+    obs["activated"] = activated
+    obs["control"] = action  # add action to obs
+    recorded_file = folder / (
+        timestamp.isoformat().replace(":", "-").replace(".", "-") + ".pkl"
+    )
+    with open(recorded_file, "wb") as f:
+        pickle.dump(obs, f)
+
+    # save rgb image as png
+    if save_png:
+        rgb = obs["base_rgb"]
+        for i in range(rgb.shape[0]):
+            rgbi = cv2.cvtColor(rgb[i], cv2.COLOR_RGB2BGR)
+            fn = str(recorded_file)[:-4] + f"-{i}.png"
+            cv2.imwrite(fn, rgbi)
 
 def save_action(recorded_file,action: np.ndarray):
     with open(recorded_file, "ab") as f:

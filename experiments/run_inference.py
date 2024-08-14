@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import numpy as np
 import tyro
 import threading
+import torch
+
 import queue
 from dobot_control.env import RobotEnv
 from dobot_control.robots.robot_node import ZMQClientRobot
@@ -16,15 +18,43 @@ from dobot_control.cameras.realsense_camera import RealSenseCamera
 from scripts.manipulate_utils import load_ini_data_camera
 
 from ModelTrain.module.model_module import Imitate_Model
+from ModelTrain.dp.pipeline import Agent as DPAgent
 
 @dataclass
 class Args:
     robot_port: int = 6001
     hostname: str = "127.0.0.1"
     show_img: bool = True
+    use_dp: bool = False
+    dp_ckpt_path: str = "best.ckpt"
 
 image_left,image_right,image_top,thread_run=None,None,None,None
 lock = threading.Lock()
+
+
+def get_default_dp_args():
+    return {
+        "output_sizes": {
+            "eef": 64,
+            "hand_pos": 64,
+            "img": 128,
+            "pos": 128,
+            "touch": 64,
+        },
+        "representation_type": ["img", "pos", "touch", "depth"],
+        "identity_encoder": False,
+        "camera_indices": [0, 1, 2],
+        "obs_horizon": 4,
+        "pred_horizon": 16,
+        "action_horizon": 8,
+        "num_diffusion_iters": 15,
+        "without_sampling": False,
+        "clip_far": False,
+        "predict_eef_delta": False,
+        "predict_pos_delta": False,
+        "use_ddim": False,
+    }
+
 
 def run_thread_cam(rs_cam, which_cam):
     global image_left, image_right, image_top, thread_run
@@ -42,6 +72,8 @@ def run_thread_cam(rs_cam, which_cam):
             image_top = image_top[:, :, ::-1]
     else:
         print("Camera index error! ")
+
+
 
 
 def main(args):
@@ -95,17 +127,36 @@ def main(args):
     for jnt in np.linspace(curr_joints, reset_joints, steps):
         env.step(jnt,np.array([1,1]))
 
-    # Initialize the model
+    # Initialize the ACT model and parameters
     model_name = 'policy_last.ckpt'
     # model_name = 'policy_best.ckpt'
     model = Imitate_Model(ckpt_dir='./ckpt/ckpt_move_cube_new', ckpt_name=model_name)
     model.loadModel()
     print("model init success...")
-
-    # Initialize the parameters
     episode_len = 900  # The total number of steps to complete the task. Note that it must be less than or equal to parameter 'episode_len' of the corresponding task in file 'ModelTrain.constants'
     t=0
     last_time = 0
+
+   # Initialize the DP model and parameters
+    dp_args = get_default_dp_args()
+    dp_model = DPAgent(
+            output_sizes=dp_args["output_sizes"],
+            representation_type=dp_args["representation_type"],
+            identity_encoder=dp_args["identity_encoder"],
+            camera_indices=dp_args["camera_indices"],
+            pred_horizon=dp_args["pred_horizon"],
+            obs_horizon=dp_args["obs_horizon"],
+            action_horizon=dp_args["action_horizon"],
+            without_sampling=dp_args["without_sampling"],
+            predict_eef_delta=dp_args["predict_eef_delta"],
+            predict_pos_delta=dp_args["predict_pos_delta"],
+            use_ddim=dp_args["use_ddim"],
+            )
+    # compile the DP model for acceleration
+    dp_model.policy.forward = torch.compile(torch.no_grad(dp_model.policy.forward))
+    dp_model.load(args.dp_ckpt_path)
+
+    # Initialize the observation
     observation = {'qpos': [], 'images': {'left_wrist': [], 'right_wrist': [], 'top': []}}
     obs = env.get_obs()
     obs["joint_positions"][6] = 1.0  # Initial position of the gripper
@@ -131,7 +182,15 @@ def main(args):
         print("read images time(ms)：",(time1-time0)*1000)
 
         # Model inference,output joint value (radian)
-        action = model.predict(observation,t)
+        if args.use_dp:
+            obs = dp_model.get_observation([observation], load_img=True)
+            action = dp_model.predict([obs], dp_args["num_diffusion_iters"]) # num_diffusion_iters is not official,
+            # need attention
+
+        else:
+            # use ACT model
+            action = model.predict(observation,t)
+
         # print("infer_action:",action)
         if action[6]>1:
             action[6]=1
@@ -153,7 +212,7 @@ def main(args):
         print("Joint increment：",delta)
         if max(delta[0:6])>0.17 or max(delta[7:13])>0.17: # 增量大于10度
             print("Note!If the joint increment is larger than 10 degrees!!!")
-            print("Do you want to continue running?Press the 'Y' key to continue, otherwise press the other button to stop the program!")
+            print("Do you want to continue running? Press the 'Y' key to continue, otherwise press the other button to stop the program!")
             temp_img = np.zeros(shape=(640, 480))
             cv2.imshow("waitKey", temp_img)  # Make cv2.waitkey(0) work
             key = cv2.waitKey(0)
@@ -197,6 +256,7 @@ def main(args):
             time.sleep(1)
             exit()
         # ×××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××
+
 
         if first:
             max_delta = (np.abs(last_action - action)).max()

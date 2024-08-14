@@ -9,7 +9,7 @@ import numpy as np
 import tyro
 import threading
 from dobot_control.agents.agent import BimanualAgent
-from scripts.format_obs import save_frame
+from scripts.format_obs import save_frame, save_dp_frame
 from dobot_control.env import RobotEnv
 from dobot_control.robots.robot_node import ZMQClientRobot
 from scripts.function_util import mismatch_data_write, wait_period, log_write, mk_dir
@@ -26,6 +26,9 @@ class Args:
     show_img: bool = False
     save_data_path = str(Path(__file__).parent.parent.parent)+"/datasets/"
     project_name = "dataset_package_test"
+    # whether to collect data for diffusion policy
+    dp_data = False
+    dp_save_png = False
 
 
 # Thread button: [lock or nor, servo or not, record or not]
@@ -389,21 +392,41 @@ def main(args):
             elif dev_what_to_do[0, 2] == -1:
                 curr_light = set_light(env, "yellow", 1)
             if what_to_do[0, 2] == 1:
-                idx += 1
-                left_dir = save_dir + f"/{dt_time[0]}/leftImg/"
-                right_dir = save_dir + f"/{dt_time[0]}/rightImg/"
-                top_dir = save_dir + f"/{dt_time[0]}/topImg/"
-                mk_dir(right_dir)
-                mk_dir(top_dir)
-                if mk_dir(left_dir):
-                    idx = 0
-                cv2.imwrite(top_dir + f"{idx}.jpg", img_list[0])
-                cv2.imwrite(left_dir + f"{idx}.jpg", img_list[1])
-                cv2.imwrite(right_dir + f"{idx}.jpg", img_list[2])
+                
+                # collect data for Diffusion Policy
+                if args.dp_data:
+                    time_str = datetime.datetime.now().strftime("%m%d_%H%M%S")
+                    dt = datetime.datetime.now()
+                    save_path = Path(save_dir).expanduser() / time_str
+                    save_path.mkdir(parents=True, exist_ok=True)
 
-                obs_dir = save_dir + f"/{dt_time[0]}/observation/"
-                mk_dir(obs_dir)
-                save_frame(obs_dir, idx, obs, action)
+                    save_dp_frame(
+                        save_path,
+                        dt,
+                        obs,
+                        action,
+                        save_png=args.dp_save_png,
+                    )
+
+                # collect data for ACT
+                else:
+                    idx += 1
+                    left_dir = save_dir + f"/{dt_time[0]}/leftImg/"
+                    right_dir = save_dir + f"/{dt_time[0]}/rightImg/"
+                    top_dir = save_dir + f"/{dt_time[0]}/topImg/"
+                    mk_dir(right_dir)
+                    mk_dir(top_dir)
+                    if mk_dir(left_dir):
+                        idx = 0
+
+                    obs_dir = save_dir + f"/{dt_time[0]}/observation/"
+                    mk_dir(obs_dir)
+
+                    cv2.imwrite(top_dir + f"{idx}.jpg", img_list[0])
+                    cv2.imwrite(left_dir + f"{idx}.jpg", img_list[1])
+                    cv2.imwrite(right_dir + f"{idx}.jpg", img_list[2])
+                    save_frame(obs_dir, idx, obs, action)
+
 
             obs = env.step(action, flag_in)
             obs["joint_positions"][6] = action[6]

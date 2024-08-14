@@ -106,6 +106,8 @@ def load_data(one_dataset_dir):
 
 
 def main(args):
+
+    # 1. creating output directory
     root_dir = str(Path(__file__).parent.parent.parent / "datasets/")
     dataset_dir = root_dir + "/" + args.dataset_name + "/collect_data/"
     mk_dir(dataset_dir)
@@ -120,12 +122,19 @@ def main(args):
     print(all_data_dir)
     MIRROR_STATE_MULTIPLY = np.array(args.MIRROR_STATE_MULTIPLY)
 
+
+
     for idx in range(len(all_data_dir)):
+
+        # 2. loading and processing data
         print("dealing with : ", idx)
         one_data_dir = dataset_dir+all_data_dir[idx]+"/"
         print(one_data_dir)
+
         qpos, qvel, action, base_action, image_dict, is_sim = load_data(one_data_dir)
-        qpos = np.concatenate([qpos[:, :7] * MIRROR_STATE_MULTIPLY, qpos[:, 7:] * MIRROR_STATE_MULTIPLY], axis=1)
+        qpos = np.concatenate([qpos[:, :7] * MIRROR_STATE_MULTIPLY, qpos[:, 7:] * MIRROR_STATE_MULTIPLY],
+                              axis=1) # MIRROR_STATE_MULTIPLY variables is used for data augmentation and symmetry
+        # handling
         qvel = np.concatenate([qvel[:, :7] * MIRROR_STATE_MULTIPLY, qvel[:, 7:] * MIRROR_STATE_MULTIPLY], axis=1)
         action = np.concatenate([action[:, :7] * MIRROR_STATE_MULTIPLY, action[:, 7:] * MIRROR_STATE_MULTIPLY], axis=1)
         if base_action is not None:
@@ -147,7 +156,8 @@ def main(args):
         else:
             raise Exception('No top or cam_high in image_dict')
 
-        # saving
+
+        # 3.saving data to dict
         data_dict = {
             '/observations/qpos': qpos,
             '/observations/qvel': qvel,
@@ -164,6 +174,7 @@ def main(args):
 
         COMPRESS = True
 
+        # 4.compress images if needed
         if COMPRESS:
             # JPEG compression
             t0 = time.time()
@@ -196,7 +207,7 @@ def main(args):
                 data_dict[f'/observations/images/{cam_name}'] = padded_compressed_image_list
             print(f'padding: {time.time() - t0:.2f}s')
 
-        # HDF5
+        # 5.creating hdf5 dataset for training
         t0 = time.time()
         dataset_path = os.path.join(output_train_data, f'episode_init_{idx}')
         with h5py.File(dataset_path + '.hdf5', 'w', rdcc_nbytes=1024 ** 2 * 2) as root:
@@ -217,6 +228,7 @@ def main(args):
             if base_action is not None:
                 base_action = root.create_dataset('base_action', (max_timesteps, 2))
 
+            # data saving
             for name, array in data_dict.items():
                 root[name][...] = array
 
