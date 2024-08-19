@@ -7,8 +7,8 @@ import cv2
 
 
 if __name__ == '__main__':
-    # model = Imitate_Model(ckpt_dir='./ckpt/ckpt_move_cube_new',ckpt_name='policy_last.ckpt')
-    model = Imitate_Model(ckpt_name='policy_last.ckpt')
+    model = Imitate_Model(ckpt_dir='./ckpt/ckpt_demo_test_8.14',ckpt_name='policy_last.ckpt')
+    # model = Imitate_Model(ckpt_name='policy_last.ckpt')
     model.loadModel()
     observation = {'qpos':[],'images':{'left_wrist':[],'right_wrist':[],'top':[]}}
     i=0
@@ -24,7 +24,7 @@ if __name__ == '__main__':
         # i +=1
 
     show_canvas = np.zeros((480, 640*3, 3), dtype=np.uint8)
-    with h5py.File("/home/zz/projects/datasets/dataset_package_new/train_data/episode_init_16.hdf5", 'r', rdcc_nbytes=1024 ** 2 * 2) as root:
+    with h5py.File("/media/zhuoli/Elements SE/Tem/xtrainer/datasets/demo_test_8.14/train_data/episode_init_16.hdf5", 'r', rdcc_nbytes=1024 ** 2 * 2) as root:
         print(len(root["/observations/images/top"]))
         for i in range(len(root["/observations/images/top"])):
             qpos = root["/observations/qpos"][i]

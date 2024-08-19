@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Args:
-    dataset_name: str = "dataset_package_new"
+    dataset_name: str = "demo_test_8.14"
     task_name: str = "dobot_task"
     MIRROR_STATE_MULTIPLY: list = (1, 1, 1, 1, 1, 1, 1)
     MIRROR_BASE_MULTIPLY: tuple = (1, 1)
@@ -108,7 +108,8 @@ def load_data(one_dataset_dir):
 def main(args):
 
     # 1. creating output directory
-    root_dir = str(Path(__file__).parent.parent.parent / "datasets/")
+    # root_dir = str(Path(__file__).parent.parent.parent / "datasets/")
+    root_dir = "/media/zhuoli/Elements SE/Tem/xtrainer/datasets"
     dataset_dir = root_dir + "/" + args.dataset_name + "/collect_data/"
     mk_dir(dataset_dir)
     output_video_dir = root_dir + "/" + args.dataset_name + "/output_videos/"

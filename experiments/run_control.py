@@ -27,8 +27,8 @@ class Args:
     save_data_path = str(Path(__file__).parent.parent.parent)+"/datasets/"
     project_name = "dataset_package_test"
     # whether to collect data for diffusion policy
-    dp_data = False
-    dp_save_png = False
+    dp_data = True
+    dp_save_png = True
 
 
 # Thread button: [lock or nor, servo or not, record or not]
