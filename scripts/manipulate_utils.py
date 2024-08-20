@@ -47,8 +47,8 @@ def load_ini_data_hands():
             joint_offsets=[float(i) for i in ini_file.get(_hand, "joint_offsets").split(",")],
             joint_signs=[int(i) for i in ini_file.get(_hand, "joint_signs").split(",")],
             gripper_config=[int(i) for i in ini_file.get(_hand, "gripper_config").split(",")],
-            start_joints=[float(i) for i in ini_file.get(_hand, "start_joints").split(",")],
-            baud_rate=int(ini_file.get(_hand, "baud_rate")))
+            start_joints=[float(i) for i in ini_file.get(_hand, "start_joints").split(",")])
+            # baud_rate=int(ini_file.get(_hand, "baud_rate")))
     return ini_file, hands_dict
 
 

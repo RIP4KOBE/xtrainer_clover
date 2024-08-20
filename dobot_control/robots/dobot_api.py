@@ -147,7 +147,7 @@ class DobotApi:
             self.socket_dobot.connect((self.ip, self.port))
         elif self.port == 30003:
             self.socket_dobot = socket.socket()
-            self.socket_dobot.settimeout(0.001)
+            self.socket_dobot.settimeout(1)
             self.socket_dobot.connect((self.ip, self.port))
         else:
             raise Exception(

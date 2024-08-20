@@ -15,7 +15,7 @@ import os
 class DobotRobotConfig:
     joint_ids: Sequence[int]
     append_id: int
-    baud_rate: int
+    # baud_rate: int
     port: str
     joint_offsets: Sequence[float]
     joint_signs: Sequence[int]
@@ -36,7 +36,7 @@ class DobotRobotConfig:
             port=self.port,
             gripper_config=self.gripper_config,
             start_joints=start_joints,
-            baudrate=self.baud_rate,
+            # baudrate=self.baud_rate,
             using_sensor=using_sensor
         )
 
