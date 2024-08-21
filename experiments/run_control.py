@@ -402,9 +402,9 @@ def main(args):
                     mk_dir(dp_save_dir)
 
                     # save img data to obs
-                    obs["base_rgb"] = img_list[0]
-                    obs["left_wrist_rgb"] = img_list[1]
-                    obs["right_wrist_rgb"] = img_list[2]
+                    obs["base_rgb"] = img_list[0].astype(np.uint8)
+                    obs["left_wrist_rgb"] = img_list[1].astype(np.uint8)
+                    obs["right_wrist_rgb"] = img_list[2].astype(np.uint8)
 
                     save_dp_frame(
                         dp_save_dir,
