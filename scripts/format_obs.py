@@ -32,7 +32,8 @@ def save_dp_frame(
     activated=True,
     save_png=False,
 ) -> None:
-    obs["activated"] = activated
+    obs["activated"]["l"]  = activated
+    obs["activated"]["r"] = activated
     obs["control"] = action  # add action to obs
 
     # recorded_file = folder / (

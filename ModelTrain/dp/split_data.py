@@ -132,14 +132,14 @@ def split_symlink_dataset(root, num_trajs):
 
 if __name__ == "__main__":
     arg = argparse.ArgumentParser()
-    arg.add_argument("--base_path", type=str, default="/home/zhuoli/bidexdiffuser/workflow/data_banana")
+    arg.add_argument("--base_path", type=str, default="/media/zhuoli/Elements SE/Tem/xtrainer/datasets/dp_test_20240820")
     arg.add_argument("--output_path", type=str, default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data")
     arg.add_argument(
         "--data_name",
         nargs="+",
         type=str,
         default=[
-            "bc_data_banana_random",
+            "collect_data",
         ],
     )
     arg.add_argument("--num_trajs", nargs="+", type=int, default=[10, 25, 50, 75])

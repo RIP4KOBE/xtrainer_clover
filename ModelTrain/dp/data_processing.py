@@ -34,8 +34,10 @@ def iterate(path, workers=32, load_img=True, num_cam=3):
             try:
                 i, file = futures[future]
                 d = future.result()
+
                 if not d["activated"]["l"] and not d["activated"]["r"]:
                     continue
+                # print("test1")
                 basedirfile = os.path.join(dirname, file)
                 maskfile = os.path.join(root_path, basedirfile)
                 if os.path.exists(maskfile):

@@ -766,9 +766,9 @@ if __name__ == "__main__":
 
     args.add_argument("--base_path", type=str, default="/shared")
     args.add_argument("--data_name", type=str, default="test_data")
-    args.add_argument("--data_path", type=str, default=None)
+    args.add_argument("--data_path", type=str, default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data/bc_data_banana_random")
     args.add_argument("--data_prefix", type=str, default=None)
-    args.add_argument("--model_save_path", type=str, default=None)
+    args.add_argument("--model_save_path", type=str, default="/home/zhuoli/dobot_xtrainer/model")
 
     args.add_argument("--clip_far", type=boolean_string, default=False)
     args.add_argument("--color_jitter", type=boolean_string, default=False)
