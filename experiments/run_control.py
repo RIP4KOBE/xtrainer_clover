@@ -24,11 +24,12 @@ class Args:
     robot_port: int = 6001
     hostname: str = "127.0.0.1"
     show_img: bool = False
-    save_data_path = str(Path(__file__).parent.parent.parent)+"/datasets/"
-    project_name = "dataset_package_test"
+    save_data_path = "/home/zhuoli/pan_new/datasets/"
+    project_name = "dp_test_20240820"
     # whether to collect data for diffusion policy
     dp_data = True
-    dp_save_png = True
+    dp_save_png = False
+    dp_dir_created = False
 
 
 # Thread button: [lock or nor, servo or not, record or not]
@@ -37,16 +38,17 @@ class Args:
 # 0: stop recording, 1: recording
 what_to_do = np.array(([0, 0, 0], [0, 0, 0]))
 dt_time = np.array([20240507161455])
+# dp_time = np.array([20240507161455])
 using_sensor = False
 is_falling = np.array([0])
 
 def button_monitor_realtime(agent):
     # servo
-    last_keys_status = np.array(([0, 0, 0], [0, 0, 0]))
+    last_keys_status = np.array(([0, 0], [0, 0]))
     start_press_status = np.array(([0, 0], [0, 0]))  # start press
     keys_press_count = np.array(([0, 0, 0], [0, 0, 0]))
 
-    while not is_falling[0]:
+    while 1:
         # time.sleep(0.010)
         now_keys = agent.get_keys()
         dev_keys = now_keys - last_keys_status
@@ -96,18 +98,12 @@ def button_monitor_realtime(agent):
                         # new recording
                         now_time = datetime.datetime.now()
                         dt_time[0] = int(now_time.strftime("%Y%m%d%H%M%S"))
+                        # dp_time[0] = int(now_time.strftime("%m%d_%H%M%S"))
                         keys_press_count[0, 2] += 1
                 else:
                     what_to_do[0, 2] = 0
                     keys_press_count[0, 2] += 1
                     # log_write(__file__, "ButtonB: [" + str(i) + "] stop recording")
-
-        # status fall
-        if using_sensor:
-            for i in range(2):
-                if now_keys[i, 2] and what_to_do[i, 0]:  # button a: lock
-                    agent.set_torque(2, True)
-                    is_falling[0] = 1
 
         last_keys_status = now_keys
 
@@ -297,8 +293,8 @@ def main(args):
 
     # agent init
     _, hands_dict = load_ini_data_hands()
-    left_agent = DobotAgent(which_hand="LEFT", dobot_config=hands_dict["HAND_LEFT"], using_sensor=using_sensor)
-    right_agent = DobotAgent(which_hand="RIGHT", dobot_config=hands_dict["HAND_RIGHT"], using_sensor=using_sensor)
+    left_agent = DobotAgent(which_hand="LEFT", dobot_config=hands_dict["HAND_LEFT"])
+    right_agent = DobotAgent(which_hand="RIGHT", dobot_config=hands_dict["HAND_RIGHT"])
     agent = BimanualAgent(left_agent, right_agent)
 
     # pose init
@@ -395,13 +391,23 @@ def main(args):
                 
                 # collect data for Diffusion Policy
                 if args.dp_data:
-                    time_str = datetime.datetime.now().strftime("%m%d_%H%M%S")
                     dt = datetime.datetime.now()
-                    save_path = Path(save_dir).expanduser() / time_str
-                    save_path.mkdir(parents=True, exist_ok=True)
+
+                    # time_str = dt.strftime("%m%d_%H%M%S")
+                    # dp_save_path = Path(save_dir) / time_str
+                    # dp_save_path.mkdir(parents=True, exist_ok=True)
+                    # args.dp_dir_created = True  # Update the flag
+
+                    dp_save_dir = save_dir + f"/{dt_time[0]}/"
+                    mk_dir(dp_save_dir)
+
+                    # save img data to obs
+                    obs["base_rgb"] = img_list[0]
+                    obs["left_wrist_rgb"] = img_list[1]
+                    obs["right_wrist_rgb"] = img_list[2]
 
                     save_dp_frame(
-                        save_path,
+                        dp_save_dir,
                         dt,
                         obs,
                         action,
@@ -426,7 +432,6 @@ def main(args):
                     cv2.imwrite(left_dir + f"{idx}.jpg", img_list[1])
                     cv2.imwrite(right_dir + f"{idx}.jpg", img_list[2])
                     save_frame(obs_dir, idx, obs, action)
-
 
             obs = env.step(action, flag_in)
             obs["joint_positions"][6] = action[6]

@@ -17,8 +17,7 @@ if __name__ == "__main__":
             try:
                 driver = DynamixelDriver(ids=hands_dict[which_hand].joint_ids,
                                          append_id=hands_dict[which_hand].append_id,
-                                         port=_port,
-                                         baudrate=hands_dict[which_hand].baud_rate)
+                                         port=_port)
                 port_list.remove(_port)
                 print("Success(hand): ", which_hand, _port)
                 ini_file.set(section=which_hand, option="port", value=_port)
@@ -54,4 +53,5 @@ if __name__ == "__main__":
                 continue
 
     assert not len(port_list), f"Error: find port error ({port_list})"
+    print("other port: ", port_list)
 

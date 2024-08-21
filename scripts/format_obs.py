@@ -25,7 +25,7 @@ def save_frame(
         pickle.dump(obs, f)
 
 def save_dp_frame(
-    folder: Path,
+    folder: str,
     timestamp: datetime.datetime,
     obs: Dict[str, np.ndarray],
     action: np.ndarray,
@@ -34,9 +34,14 @@ def save_dp_frame(
 ) -> None:
     obs["activated"] = activated
     obs["control"] = action  # add action to obs
-    recorded_file = folder / (
-        timestamp.isoformat().replace(":", "-").replace(".", "-") + ".pkl"
-    )
+
+    # recorded_file = folder / (
+    #     timestamp.isoformat().replace(":", "-").replace(".", "-") + ".pkl"
+    # # )
+    save_time = timestamp.isoformat().replace(":", "-").replace(".", "-")
+    recorded_file = folder + f"{save_time}" + ".pkl"
+
+
     with open(recorded_file, "wb") as f:
         pickle.dump(obs, f)
 
@@ -44,7 +49,9 @@ def save_dp_frame(
     if save_png:
         rgb = obs["base_rgb"]
         for i in range(rgb.shape[0]):
-            rgbi = cv2.cvtColor(rgb[i], cv2.COLOR_RGB2BGR)
+            normalized_img = cv2.normalize(rgb[i], None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+            uint_img = normalized_img.astype(np.uint8)
+            rgbi = cv2.cvtColor(uint_img, cv2.COLOR_RGB2BGR)
             fn = str(recorded_file)[:-4] + f"-{i}.png"
             cv2.imwrite(fn, rgbi)
 

@@ -15,7 +15,6 @@ import os
 class DobotRobotConfig:
     joint_ids: Sequence[int]
     append_id: int
-    # baud_rate: int
     port: str
     joint_offsets: Sequence[float]
     joint_signs: Sequence[int]
@@ -26,7 +25,7 @@ class DobotRobotConfig:
         assert len(self.joint_ids) == len(self.joint_offsets)
         assert len(self.joint_ids) == len(self.joint_signs)
 
-    def make_robot(self, start_joints: Optional[np.ndarray] = None, using_sensor: bool = False) -> DynamixelRobot:
+    def make_robot(self, start_joints: Optional[np.ndarray] = None) -> DynamixelRobot:
         return DynamixelRobot(
             joint_ids=self.joint_ids,
             append_id=self.append_id,
@@ -36,23 +35,19 @@ class DobotRobotConfig:
             port=self.port,
             gripper_config=self.gripper_config,
             start_joints=start_joints,
-            # baudrate=self.baud_rate,
-            using_sensor=using_sensor
         )
 
 class DobotAgent(Agent):
     def __init__(
         self,
-        using_sensor: bool,
         which_hand: str,
         dobot_config: Optional[DobotRobotConfig] = None,
         start_joints: Optional[np.ndarray] = None,
     ):
         self.which_hand = which_hand
-        self.using_sensor = using_sensor
         self.torque_enable = True
         assert dobot_config
-        self._robot = dobot_config.make_robot(start_joints=start_joints, using_sensor=self.using_sensor)
+        self._robot = dobot_config.make_robot(start_joints=start_joints)
 
     def act(self, obs: Dict[str, np.ndarray]) -> np.ndarray:
         return self._robot.get_joint_state()
