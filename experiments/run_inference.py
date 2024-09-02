@@ -10,10 +10,10 @@ import tyro
 import threading
 import torch
 
-import queue
 from dobot_control.env import RobotEnv
 from dobot_control.robots.robot_node import ZMQClientRobot
 from dobot_control.cameras.realsense_camera import RealSenseCamera
+from dobot_control.agents.dp_agent import BimanualDPAgent
 
 from scripts.manipulate_utils import load_ini_data_camera
 
@@ -25,35 +25,12 @@ class Args:
     robot_port: int = 6001
     hostname: str = "127.0.0.1"
     show_img: bool = True
-    use_dp: bool = False
-    dp_ckpt_path: str = "best.ckpt"
+    use_dp: bool = True
+    dp_ckpt_path: str = "/shared/ckpts/best.ckpt"
+
 
 image_left,image_right,image_top,thread_run=None,None,None,None
 lock = threading.Lock()
-
-
-def get_default_dp_args():
-    return {
-        "output_sizes": {
-            "eef": 64,
-            "hand_pos": 64,
-            "img": 128,
-            "pos": 128,
-            "touch": 64,
-        },
-        "representation_type": ["img", "pos", "touch", "depth"],
-        "identity_encoder": False,
-        "camera_indices": [0, 1, 2],
-        "obs_horizon": 4,
-        "pred_horizon": 16,
-        "action_horizon": 8,
-        "num_diffusion_iters": 15,
-        "without_sampling": False,
-        "clip_far": False,
-        "predict_eef_delta": False,
-        "predict_pos_delta": False,
-        "use_ddim": False,
-    }
 
 
 def run_thread_cam(rs_cam, which_cam):
@@ -72,8 +49,6 @@ def run_thread_cam(rs_cam, which_cam):
             image_top = image_top[:, :, ::-1]
     else:
         print("Camera index error! ")
-
-
 
 
 def main(args):
@@ -137,24 +112,26 @@ def main(args):
     t=0
     last_time = 0
 
-   # Initialize the DP model and parameters
-    dp_args = get_default_dp_args()
-    dp_model = DPAgent(
-            output_sizes=dp_args["output_sizes"],
-            representation_type=dp_args["representation_type"],
-            identity_encoder=dp_args["identity_encoder"],
-            camera_indices=dp_args["camera_indices"],
-            pred_horizon=dp_args["pred_horizon"],
-            obs_horizon=dp_args["obs_horizon"],
-            action_horizon=dp_args["action_horizon"],
-            without_sampling=dp_args["without_sampling"],
-            predict_eef_delta=dp_args["predict_eef_delta"],
-            predict_pos_delta=dp_args["predict_pos_delta"],
-            use_ddim=dp_args["use_ddim"],
-            )
-    # compile the DP model for acceleration
-    dp_model.policy.forward = torch.compile(torch.no_grad(dp_model.policy.forward))
-    dp_model.load(args.dp_ckpt_path)
+   # Initialize the DP agent and parameters
+    dp_agent = BimanualDPAgent(ckpt_path=args.dp_ckpt_path)
+
+   #  dp_model = DPAgent(
+   #          output_sizes=dp_args["output_sizes"],
+   #          representation_type=dp_args["representation_type"],
+   #          identity_encoder=dp_args["identity_encoder"],
+   #          camera_indices=dp_args["camera_indices"],
+   #          pred_horizon=dp_args["pred_horizon"],
+   #          obs_horizon=dp_args["obs_horizon"],
+   #          action_horizon=dp_args["action_horizon"],
+   #          without_sampling=dp_args["without_sampling"],
+   #          predict_eef_delta=dp_args["predict_eef_delta"],
+   #          predict_pos_delta=dp_args["predict_pos_delta"],
+   #          use_ddim=dp_args["use_ddim"],
+   #          )
+   #  # compile the DP model for acceleration
+   #  dp_model.policy.forward = torch.compile(torch.no_grad(dp_model.policy.forward))
+   #  dp_model.load(args.dp_ckpt_path)
+
 
     # Initialize the observation
     observation = {'qpos': [], 'images': {'left_wrist': [], 'right_wrist': [], 'top': []}}
@@ -183,9 +160,15 @@ def main(args):
 
         # Model inference,output joint value (radian)
         if args.use_dp:
-            obs = dp_model.get_observation([observation], load_img=True)
-            action = dp_model.predict([obs], dp_args["num_diffusion_iters"]) # num_diffusion_iters is not official,
+            # obs = dp_model.get_observation([observation], load_img=True)
+            # action = dp_model.predict([obs], dp_args["num_diffusion_iters"]) # num_diffusion_iters is not official,
             # need attention
+            dp_observation = {'qpos': [], 'images': {'left_wrist_rgb': [], 'right_wrist_rgb': [], 'base_rgb': []}}
+            dp_observation['qpos'] = observation['qpos']
+            dp_observation['images']['left_wrist_rgb'] = image_left
+            dp_observation['images']['right_wrist_rgb'] = image_right
+            dp_observation['images']['base_rgb'] = image_top
+            action = dp_agent.act(dp_observation)
 
         else:
             # use ACT model

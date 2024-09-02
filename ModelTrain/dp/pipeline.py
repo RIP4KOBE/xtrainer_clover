@@ -29,18 +29,18 @@ RIGHT_XTRAINER_IDX = list(range(12, 18))
 # RIGHT_HAND_IDX = list(range(18, 24))
 # GRIPPER_IDX = LEFT_HAND_IDX + RIGHT_HAND_IDX
 RT_DIM = {
-    "eef": 12,
+    "eef": 14,
     "hand_pos": 2,
-    "pos": 24,
+    "pos": 28,
     "touch": 60,
     "action": 14,
 }
 TEST_INPUT = {
-    "joint_positions": torch.zeros(24),
-    "ee_pos_quat": torch.zeros(12),
+    "joint_positions": torch.zeros(28),
+    "ee_pos_quat": torch.zeros(14),
     "base_rgb": torch.zeros(3, 480, 640, 3),
     "base_depth": torch.zeros(3, 480, 640),
-    "control": torch.zeros(24),
+    "control": torch.zeros(28),
     "touch": torch.zeros(60),
     "hand_pos": torch.zeros(2),
     # "hand_pos": torch.zeros(12),
@@ -65,7 +65,8 @@ class Agent:
             "touch": 0.0,
         },
         action_dim=14,
-        camera_indices=[0, 1, 2],
+        # camera_indices=[0, 1, 2],
+        camera_indices=[0],
         representation_type=["eef", "hand_pos", "img", "touch", "depth"],
         pred_horizon=4,
         obs_horizon=1,
@@ -321,7 +322,7 @@ class Agent:
         )
 
         image_size = data[0]["base_rgb"].shape
-        H, W = image_size[1], image_size[2]
+        H, W = image_size[0], image_size[1]
 
         if self.image_channel == 4:
             # Use depth
@@ -356,6 +357,7 @@ class Agent:
                 rgb = d["base_rgb"].reshape(
                     -1, H, W, self.image_channel
                 )  # [camera_num, 480, 640, 3]
+
                 rgb = rgb[self.camera_indices].astype(np.float32)
                 rgb = np.moveaxis(rgb, -1, 1)  # [camera_num, 3, 480, 640]
                 if H == 480 and W == 640 and self.color_jitter == False:
@@ -400,7 +402,7 @@ class Agent:
                     [d["gripper_position"] for d in data]
                 )
             elif rt == "pos":
-                input_data[rt] = np.stack([d["joint_positions"] for d in data])
+                input_data[rt] = np.stack([d["qpos"] for d in data])
             else:
                 input_data[rt] = np.stack([d[rt] for d in data])
         return input_data
@@ -761,12 +763,13 @@ if __name__ == "__main__":
 
     args.add_argument("--eval", type=boolean_string, default=False)
     args.add_argument(
-        "--representation_type", type=str, default="img-eef-hand_pos"
+        "--representation_type", type=str, default="img-eef"
     )
 
     args.add_argument("--base_path", type=str, default="/shared")
     args.add_argument("--data_name", type=str, default="test_data")
-    args.add_argument("--data_path", type=str, default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data/bc_data_banana_random")
+    args.add_argument("--data_path", type=str,
+                      default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data/collect_data")
     args.add_argument("--data_prefix", type=str, default=None)
     args.add_argument("--model_save_path", type=str, default="/home/zhuoli/dobot_xtrainer/model")
 
@@ -795,7 +798,7 @@ if __name__ == "__main__":
     args.add_argument("--identity_encoder", type=boolean_string, default=False)
     args.add_argument("--gpu", type=int, default=0)
 
-    args.add_argument("--camera_indices", type=str, default="012")
+    args.add_argument("--camera_indices", type=str, default="0")
     args.add_argument("--save_freq", type=int, default=10)
     args.add_argument("--eval_freq", type=int, default=10)
 

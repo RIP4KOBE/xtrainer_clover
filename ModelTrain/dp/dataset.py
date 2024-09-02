@@ -195,10 +195,10 @@ class Dataset(torch.utils.data.Dataset):
             stats["hand_pos"]["max"][range(6, 12)] = hand_upper_ranges
 
         # hand action is normalized to [0,1]
-        stats["action"]["min"][left_hand_indices] = 0.0
-        stats["action"]["max"][left_hand_indices] = 1.0
-        stats["action"]["min"][right_hand_indices] = 0.0
-        stats["action"]["max"][right_hand_indices] = 1.0
+        # stats["action"]["min"][left_hand_indices] = 0.0
+        # stats["action"]["max"][left_hand_indices] = 1.0
+        # stats["action"]["min"][right_hand_indices] = 0.0
+        # stats["action"]["max"][right_hand_indices] = 1.0
 
         for key, data in train_data.items():
             if key == "touch" and binarize_touch:
