@@ -3,8 +3,8 @@ from module.train_module import train
 
 def arg_config():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--ckpt_dir', action='store', type=str, help='ckpt_dir', default='./ckpt/ckpt_demo_test_8.14',required=False)
-    parser.add_argument('--task_name', action='store', type=str, default='demo_test_8.14',help='task_name', required=False)
+    parser.add_argument('--ckpt_dir', action='store', type=str, help='ckpt_dir', default='./ckpt/tidying_up_bowls_0904',required=False)
+    parser.add_argument('--task_name', action='store', type=str, default='tidying_up_bowls_0904',help='task_name', required=False)
     parser.add_argument('--batch_size', action='store', type=int, help='batch_size', default=16, required=False)
     parser.add_argument('--seed', action='store', type=int, help='seed', default=0,required=False)
     parser.add_argument('--num_steps', action='store', type=int, help='num_steps', default=30000, required=False)

@@ -27,6 +27,8 @@ class Args:
     show_img: bool = True
     use_dp: bool = True
     dp_ckpt_path: str = "/shared/ckpts/best.ckpt"
+    dp_model = None
+    act_model = None
 
 
 image_left,image_right,image_top,thread_run=None,None,None,None
@@ -102,36 +104,22 @@ def main(args):
     for jnt in np.linspace(curr_joints, reset_joints, steps):
         env.step(jnt,np.array([1,1]))
 
-    # Initialize the ACT model and parameters
-    model_name = 'policy_last.ckpt'
-    # model_name = 'policy_best.ckpt'
-    model = Imitate_Model(ckpt_dir='./ckpt/ckpt_move_cube_new', ckpt_name=model_name)
-    model.loadModel()
-    print("model init success...")
+    # Initialize the inference model
+    if args.use_dp:
+       # use DP model
+       dp_model = BimanualDPAgent(ckpt_path=args.dp_ckpt_path)
+       print("DP model init success...")
+
+    else:
+        # use ACT model
+        act_model_name = 'policy_last.ckpt'
+        act_model = Imitate_Model(ckpt_dir='./ckpt/ckpt_move_cube_new', ckpt_name=act_model_name)
+        act_model.loadModel()
+        print("ACT model init success...")
+
     episode_len = 900  # The total number of steps to complete the task. Note that it must be less than or equal to parameter 'episode_len' of the corresponding task in file 'ModelTrain.constants'
     t=0
     last_time = 0
-
-   # Initialize the DP agent and parameters
-    dp_agent = BimanualDPAgent(ckpt_path=args.dp_ckpt_path)
-
-   #  dp_model = DPAgent(
-   #          output_sizes=dp_args["output_sizes"],
-   #          representation_type=dp_args["representation_type"],
-   #          identity_encoder=dp_args["identity_encoder"],
-   #          camera_indices=dp_args["camera_indices"],
-   #          pred_horizon=dp_args["pred_horizon"],
-   #          obs_horizon=dp_args["obs_horizon"],
-   #          action_horizon=dp_args["action_horizon"],
-   #          without_sampling=dp_args["without_sampling"],
-   #          predict_eef_delta=dp_args["predict_eef_delta"],
-   #          predict_pos_delta=dp_args["predict_pos_delta"],
-   #          use_ddim=dp_args["use_ddim"],
-   #          )
-   #  # compile the DP model for acceleration
-   #  dp_model.policy.forward = torch.compile(torch.no_grad(dp_model.policy.forward))
-   #  dp_model.load(args.dp_ckpt_path)
-
 
     # Initialize the observation
     observation = {'qpos': [], 'images': {'left_wrist': [], 'right_wrist': [], 'top': []}}
@@ -160,19 +148,15 @@ def main(args):
 
         # Model inference,output joint value (radian)
         if args.use_dp:
-            # obs = dp_model.get_observation([observation], load_img=True)
-            # action = dp_model.predict([obs], dp_args["num_diffusion_iters"]) # num_diffusion_iters is not official,
-            # need attention
             dp_observation = {'qpos': [], 'images': {'left_wrist_rgb': [], 'right_wrist_rgb': [], 'base_rgb': []}}
             dp_observation['qpos'] = observation['qpos']
             dp_observation['images']['left_wrist_rgb'] = image_left
             dp_observation['images']['right_wrist_rgb'] = image_right
             dp_observation['images']['base_rgb'] = image_top
-            action = dp_agent.act(dp_observation)
+            action = dp_model.act(dp_observation)
 
         else:
-            # use ACT model
-            action = model.predict(observation,t)
+            action = act_model.predict(observation,t)
 
         # print("infer_action:",action)
         if action[6]>1:
@@ -239,7 +223,6 @@ def main(args):
             time.sleep(1)
             exit()
         # ×××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××
-
 
         if first:
             max_delta = (np.abs(last_action - action)).max()

@@ -173,33 +173,6 @@ class Dataset(torch.utils.data.Dataset):
             for key, data in train_data.items():
                 stats[key] = get_data_stats(data)
 
-        # overwrite the min max of hand info
-        left_hand_indices = np.array([6, 7, 8, 9, 10, 11])
-        right_hand_indices = np.array([18, 19, 20, 21, 22, 23])
-
-        # hand joint_position range
-        hand_upper_ranges = np.array(
-            [hand_grip_range] * 4 + [90, 120], dtype=np.float32
-        )
-        hand_lower_ranges = np.array([5, 5, 5, 5, 5, 5], dtype=np.float32)
-
-        if "pos" in representation_type:
-            stats["pos"]["min"][left_hand_indices] = hand_lower_ranges
-            stats["pos"]["min"][right_hand_indices] = hand_lower_ranges
-            stats["pos"]["max"][left_hand_indices] = hand_upper_ranges
-            stats["pos"]["max"][right_hand_indices] = hand_upper_ranges
-        elif "hand_pos" in representation_type:
-            stats["hand_pos"]["min"][range(6)] = hand_lower_ranges
-            stats["hand_pos"]["min"][range(6, 12)] = hand_lower_ranges
-            stats["hand_pos"]["max"][range(6)] = hand_upper_ranges
-            stats["hand_pos"]["max"][range(6, 12)] = hand_upper_ranges
-
-        # hand action is normalized to [0,1]
-        # stats["action"]["min"][left_hand_indices] = 0.0
-        # stats["action"]["max"][left_hand_indices] = 1.0
-        # stats["action"]["min"][right_hand_indices] = 0.0
-        # stats["action"]["max"][right_hand_indices] = 1.0
-
         for key, data in train_data.items():
             if key == "touch" and binarize_touch:
                 normalized_train_data[key] = (
@@ -271,7 +244,9 @@ class Dataset(torch.utils.data.Dataset):
                 # transform the img
                 nsample["img"] = nsample["img"].reshape(
                     nsample_shape[0] * nsample_shape[1], *nsample_shape[2:]
-                )                                                                           # (Batch * num_cam, Channel, Height, Width)
+                )    # flatten the structure into (Batch * num_cam, Channel, Height, Width), so each image is a single
+                # row in a 2D array, simplifying the
+                # application of transformations that operate on each image independently.
                 nsample["img"] = self.transform(nsample["img"])
                 nsample["img"] = nsample["img"].reshape(nsample_shape[:3] + (216, 288))     # (Batch, num_cam, Channel, Height, Width)
 

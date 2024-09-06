@@ -392,12 +392,6 @@ def main(args):
                 # collect data for Diffusion Policy
                 if args.dp_data:
                     dt = datetime.datetime.now()
-
-                    # time_str = dt.strftime("%m%d_%H%M%S")
-                    # dp_save_path = Path(save_dir) / time_str
-                    # dp_save_path.mkdir(parents=True, exist_ok=True)
-                    # args.dp_dir_created = True  # Update the flag
-
                     dp_save_dir = save_dir + f"/{dt_time[0]}/"
                     mk_dir(dp_save_dir)
 

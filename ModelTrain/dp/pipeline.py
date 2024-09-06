@@ -31,12 +31,12 @@ RIGHT_XTRAINER_IDX = list(range(12, 18))
 RT_DIM = {
     "eef": 14,
     "hand_pos": 2,
-    "pos": 28,
+    "pos": 14,
     "touch": 60,
     "action": 14,
 }
 TEST_INPUT = {
-    "joint_positions": torch.zeros(28),
+    "joint_positions": torch.zeros(14),
     "ee_pos_quat": torch.zeros(14),
     "base_rgb": torch.zeros(3, 480, 640, 3),
     "base_depth": torch.zeros(3, 480, 640),
@@ -65,8 +65,7 @@ class Agent:
             "touch": 0.0,
         },
         action_dim=14,
-        # camera_indices=[0, 1, 2],
-        camera_indices=[0],
+        camera_indices=[0, 1, 2],
         representation_type=["eef", "hand_pos", "img", "touch", "depth"],
         pred_horizon=4,
         obs_horizon=1,
@@ -97,7 +96,7 @@ class Agent:
         self.num_workers = num_workers
         self.binarize_touch = binarize_touch
 
-        # <editor-fold desc="Processing images in the robot dataset">
+        # <editor-fold desc="Image Preprocessing">
         # Merge depth and rgb image
         if "depth" in representation_type:
             self.image_channel = 4
@@ -402,7 +401,7 @@ class Agent:
                     [d["gripper_position"] for d in data]
                 )
             elif rt == "pos":
-                input_data[rt] = np.stack([d["qpos"] for d in data])
+                input_data[rt] = np.stack([d["joint_positions"] for d in data])
             else:
                 input_data[rt] = np.stack([d[rt] for d in data])
         return input_data
@@ -763,7 +762,7 @@ if __name__ == "__main__":
 
     args.add_argument("--eval", type=boolean_string, default=False)
     args.add_argument(
-        "--representation_type", type=str, default="img-eef"
+        "--representation_type", type=str, default="img-pos"
     )
 
     args.add_argument("--base_path", type=str, default="/shared")
