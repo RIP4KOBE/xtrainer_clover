@@ -24,10 +24,11 @@ class Args:
     robot_port: int = 6001
     hostname: str = "127.0.0.1"
     show_img: bool = False
-    save_data_path = "/home/zhuoli/pan_new/datasets/"
-    project_name = "dp_test_20240820"
+    save_data_path = "/media/zhuoli/Elements SE/Tem/xtrainer/datasets/"
+    # save_data_path = "/media/zhuoli/8ECE-77DB"
+    project_name = "tidying_up_bowls_0909"
     # whether to collect data for diffusion policy
-    dp_data = True
+    dp_data = False
     dp_save_png = False
     dp_dir_created = False
 

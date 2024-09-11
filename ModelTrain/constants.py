@@ -7,7 +7,7 @@ TASK_CONFIGS = {
     # dobot move cube new
         'tidying_up_bowls_0904': {
         'dataset_dir': DATA_DIR + '/train_data',
-        'episode_len': 700,
+        'episode_len': 2500,
         'train_ratio': 0.9,
         'camera_names': ['top', 'left_wrist', 'right_wrist']
     },

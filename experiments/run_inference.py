@@ -26,7 +26,7 @@ class Args:
     hostname: str = "127.0.0.1"
     show_img: bool = True
     use_dp: bool = True
-    dp_ckpt_path: str = "/shared/ckpts/best.ckpt"
+    dp_ckpt_path: str = "/home/zhuoli/xtrainer_clover/ModelTrain/ckpt/dp/dish_washing_20d_20240911/last.ckpt"
     dp_model = None
     act_model = None
 
@@ -113,11 +113,12 @@ def main(args):
     else:
         # use ACT model
         act_model_name = 'policy_last.ckpt'
-        act_model = Imitate_Model(ckpt_dir='./ckpt/ckpt_move_cube_new', ckpt_name=act_model_name)
+        act_model = Imitate_Model(ckpt_dir='./ckpt/act/dish_washing_20240814', ckpt_name=act_model_name)
+        # act_model = Imitate_Model(ckpt_dir='./ckpt/act/tidying_up_coasters_0904', ckpt_name=act_model_name)
         act_model.loadModel()
         print("ACT model init success...")
 
-    episode_len = 900  # The total number of steps to complete the task. Note that it must be less than or equal to parameter 'episode_len' of the corresponding task in file 'ModelTrain.constants'
+    episode_len = 1000  # The total number of steps to complete the task. Note that it must be less than or equal to parameter 'episode_len' of the corresponding task in file 'ModelTrain.constants'
     t=0
     last_time = 0
 

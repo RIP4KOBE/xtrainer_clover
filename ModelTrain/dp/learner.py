@@ -8,7 +8,7 @@ from diffusers.optimization import get_scheduler
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from diffusers.training_utils import EMAModel
-from models import *
+from ModelTrain.dp.models import *
 from torch.nn.functional import mse_loss
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
@@ -105,7 +105,7 @@ class DiffusionPolicy:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Exponential Moving Average of the model weights
-        self.ema = EMAModel(parameters=self.nets.parameters(), power=0.75)
+        self.ema = EMAModel(model=self.nets, power=0.75)
         self.ema_nets = copy.deepcopy(self.nets)
 
         # Standard ADAM optimizer
@@ -125,7 +125,7 @@ class DiffusionPolicy:
     def to(self, device):
         self.device = device
         self.nets.to(device)
-        self.ema.to(device)
+        # self.ema.to(device)
         self.ema_nets.to(device)
 
     def train(

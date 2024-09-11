@@ -17,7 +17,7 @@ import numpy as np
 import torch
 from dataset import Dataset
 from learner import DiffusionPolicy
-from models import GaussianNoise, ImageEncoder, StateEncoder
+from ModelTrain.dp.models import GaussianNoise, ImageEncoder, StateEncoder
 from torch import nn
 from torch.nn import ModuleList
 from torchvision import transforms
@@ -320,7 +320,7 @@ class Agent:
             dtype=torch.float32,
         )
 
-        image_size = data[0]["base_rgb"].shape
+        image_size = data[0]["images"]["base_rgb"].shape
         H, W = image_size[0], image_size[1]
 
         if self.image_channel == 4:
@@ -353,7 +353,7 @@ class Agent:
         else:
             # Only use rgb
             def process_rgb(d):
-                rgb = d["base_rgb"].reshape(
+                rgb = d["images"]["base_rgb"].reshape(
                     -1, H, W, self.image_channel
                 )  # [camera_num, 480, 640, 3]
 
@@ -401,7 +401,7 @@ class Agent:
                     [d["gripper_position"] for d in data]
                 )
             elif rt == "pos":
-                input_data[rt] = np.stack([d["joint_positions"] for d in data])
+                input_data[rt] = np.stack([d["qpos"] for d in data])
             else:
                 input_data[rt] = np.stack([d[rt] for d in data])
         return input_data
