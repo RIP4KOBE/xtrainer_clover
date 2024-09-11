@@ -123,12 +123,12 @@ def main(args):
     last_time = 0
 
     # Initialize the observation
-    observation = {'qpos': [], 'images': {'left_wrist': [], 'right_wrist': [], 'top': []}}
+    observation = {'joint_positions': [], 'images': {'left_wrist': [], 'right_wrist': [], 'top': []}}
     obs = env.get_obs()
     obs["joint_positions"][6] = 1.0  # Initial position of the gripper
     obs["joint_positions"][13] = 1.0
-    observation['qpos'] = obs["joint_positions"]  # Initial value of the joint
-    last_action = observation['qpos'].copy()
+    observation['joint_positions'] = obs["joint_positions"]  # Initial value of the joint
+    last_action = observation['joint_positions'].copy()
 
     first = True
 
@@ -149,11 +149,11 @@ def main(args):
 
         # Model inference,output joint value (radian)
         if args.use_dp:
-            dp_observation = {'qpos': [], 'images': {'left_wrist_rgb': [], 'right_wrist_rgb': [], 'base_rgb': []}}
-            dp_observation['qpos'] = observation['qpos']
-            dp_observation['images']['left_wrist_rgb'] = image_left
-            dp_observation['images']['right_wrist_rgb'] = image_right
-            dp_observation['images']['base_rgb'] = image_top
+            dp_observation = {'joint_positions': [], 'left_wrist_rgb': [], 'right_wrist_rgb': [], 'base_rgb': []}
+            dp_observation['joint_positions'] = observation['joint_positions']
+            dp_observation['left_wrist_rgb'] = image_left
+            dp_observation['right_wrist_rgb'] = image_right
+            dp_observation['base_rgb'] = image_top
             action = dp_model.act(dp_observation)
 
         else:
@@ -242,7 +242,7 @@ def main(args):
         # Obtain the current joint value of the robots (including the gripper)
         obs["joint_positions"][6] = action[6]   # In order to decrease acquisition time, the last action of the gripper is taken as its current observation
         obs["joint_positions"][13] = action[13]
-        observation['qpos'] = obs["joint_positions"]
+        observation['joint_positions'] = obs["joint_positions"]
 
         print("Read joint value time(ms)：", (time4 - time3) * 1000)
         t +=1

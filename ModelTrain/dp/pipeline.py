@@ -320,7 +320,7 @@ class Agent:
             dtype=torch.float32,
         )
 
-        image_size = data[0]["images"]["base_rgb"].shape
+        image_size = data[0]["base_rgb"].shape
         H, W = image_size[0], image_size[1]
 
         if self.image_channel == 4:
@@ -353,11 +353,16 @@ class Agent:
         else:
             # Only use rgb
             def process_rgb(d):
-                rgb = d["images"]["base_rgb"].reshape(
-                    -1, H, W, self.image_channel
-                )  # [camera_num, 480, 640, 3]
+                rgb = np.concatenate([
+                    d["base_rgb"],
+                    d["left_wrist_rgb"],
+                    d["right_wrist_rgb"]
+                ], axis=-1).reshape(-1, H, W, self.image_channel)
+                # rgb = d["base_rgb"].reshape(
+                #     -1, H, W, self.image_channel
+                # )  # [camera_num, 480, 640, 3]
 
-                rgb = rgb[self.camera_indices].astype(np.float32)
+                rgb = rgb[self.camera_indices, :].astype(np.float32)
                 rgb = np.moveaxis(rgb, -1, 1)  # [camera_num, 3, 480, 640]
                 if H == 480 and W == 640 and self.color_jitter == False:
                     rgb = self.downsample(
@@ -401,7 +406,7 @@ class Agent:
                     [d["gripper_position"] for d in data]
                 )
             elif rt == "pos":
-                input_data[rt] = np.stack([d["qpos"] for d in data])
+                input_data[rt] = np.stack([d["joint_positions"] for d in data])
             else:
                 input_data[rt] = np.stack([d[rt] for d in data])
         return input_data
@@ -477,7 +482,7 @@ class Agent:
 
         data_index = 0
 
-        print("Loading training data    ")
+        print("Loading training data")
         for i, epi in enumerate(current_epi_dir):
             print("loading {}-th data from {}\r".format(i, epi), end="")
             data = data_processing.iterate(epi, load_img=self.load_img)
@@ -488,6 +493,7 @@ class Agent:
 
             # images - (N, num_cams, self.image_channel, 240, 320)
             obs = self.get_observation(data, self.load_img or cache_memmap)
+            print("test1")
 
             # obs space
             for rt in self.representation_type:
@@ -797,7 +803,7 @@ if __name__ == "__main__":
     args.add_argument("--identity_encoder", type=boolean_string, default=False)
     args.add_argument("--gpu", type=int, default=0)
 
-    args.add_argument("--camera_indices", type=str, default="0")
+    args.add_argument("--camera_indices", type=str, default="012")
     args.add_argument("--save_freq", type=int, default=10)
     args.add_argument("--eval_freq", type=int, default=10)
 

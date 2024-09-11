@@ -244,9 +244,7 @@ class Dataset(torch.utils.data.Dataset):
                 # transform the img
                 nsample["img"] = nsample["img"].reshape(
                     nsample_shape[0] * nsample_shape[1], *nsample_shape[2:]
-                )    # flatten the structure into (Batch * num_cam, Channel, Height, Width), so each image is a single
-                # row in a 2D array, simplifying the
-                # application of transformations that operate on each image independently.
+                )                                                                           # (Batch * num_cam, Channel, Height, Width)
                 nsample["img"] = self.transform(nsample["img"])
                 nsample["img"] = nsample["img"].reshape(nsample_shape[:3] + (216, 288))     # (Batch, num_cam, Channel, Height, Width)
 
