@@ -25,13 +25,8 @@ class Args:
     hostname: str = "127.0.0.1"
     show_img: bool = False
     save_data_path = "/media/zhuoli/Elements SE/Tem/xtrainer/datasets/"
-    # save_data_path = "/media/zhuoli/8ECE-77DB"
     project_name = "tidying_up_bowls_0909"
-    # whether to collect data for diffusion policy
-    dp_data = False
-    dp_save_png = False
-    dp_dir_created = False
-
+    agent_name = "act"
 
 # Thread button: [lock or nor, servo or not, record or not]
 # 0: lock, 1: unlock
@@ -391,7 +386,7 @@ def main(args):
             if what_to_do[0, 2] == 1:
                 
                 # collect data for Diffusion Policy
-                if args.dp_data:
+                if args.agent_name == "dp":
                     dt = datetime.datetime.now()
                     dp_save_dir = save_dir + f"/{dt_time[0]}/"
                     mk_dir(dp_save_dir)

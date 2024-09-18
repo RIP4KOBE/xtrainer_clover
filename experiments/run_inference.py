@@ -25,8 +25,9 @@ class Args:
     robot_port: int = 6001
     hostname: str = "127.0.0.1"
     show_img: bool = True
-    use_dp: bool = True
-    dp_ckpt_path: str = "/home/zhuoli/xtrainer_clover/ModelTrain/ckpt/dp/dish_washing_20d_20240911/last.ckpt"
+    agent_name: str = "dp"
+    act_ckpt_path: str = "./ckpt/act/dish_washing_20240814"
+    dp_ckpt_path: str = "./ckpt/dp/dish_washing_20d_20240911/last.ckpt"
     dp_model = None
     act_model = None
 
@@ -105,7 +106,7 @@ def main(args):
         env.step(jnt,np.array([1,1]))
 
     # Initialize the inference model
-    if args.use_dp:
+    if args.agent_name == "dp":
        # use DP model
        dp_model = BimanualDPAgent(ckpt_path=args.dp_ckpt_path)
        print("DP model init success...")
@@ -113,7 +114,7 @@ def main(args):
     else:
         # use ACT model
         act_model_name = 'policy_last.ckpt'
-        act_model = Imitate_Model(ckpt_dir='./ckpt/act/dish_washing_20240814', ckpt_name=act_model_name)
+        act_model = Imitate_Model(ckpt_dir=args.act_ckpt_path, ckpt_name=act_model_name)
         # act_model = Imitate_Model(ckpt_dir='./ckpt/act/tidying_up_coasters_0904', ckpt_name=act_model_name)
         act_model.loadModel()
         print("ACT model init success...")
@@ -148,7 +149,7 @@ def main(args):
         print("read images time(ms)：",(time1-time0)*1000)
 
         # Model inference,output joint value (radian)
-        if args.use_dp:
+        if args.agent_name == "dp":
             dp_observation = {'joint_positions': [], 'left_wrist_rgb': [], 'right_wrist_rgb': [], 'base_rgb': []}
             dp_observation['joint_positions'] = observation['joint_positions']
             dp_observation['left_wrist_rgb'] = image_left

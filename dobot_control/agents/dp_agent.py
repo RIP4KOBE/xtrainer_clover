@@ -227,20 +227,4 @@ class BimanualDPAgent:
 
             act = self.action_queue.popleft()
 
-        # if self.predict_pos_delta:
-        #     self.control[UR_IDX] = curr_joint_pos[UR_IDX]
-        #     self.control = self.control + act
-        #     act = self.control
-        #     # act = curr_joint_pos + act
-        #
-        # if self.predict_eef_delta:
-        #     left_arm_act = get_eef_pose(curr_eef_pose[:6], act[:6])
-        #     left_hand_act = act[6:12]
-        #     right_arm_act = get_eef_pose(curr_eef_pose[6:], act[12:18])
-        #     right_hand_act = act[18:24]
-        #     act = np.concatenate(
-        #         [left_arm_act, left_hand_act, right_arm_act, right_hand_act],
-        #         axis=-1,
-        #     )
-
         return act
