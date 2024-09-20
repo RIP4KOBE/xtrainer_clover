@@ -2,12 +2,12 @@
 import pathlib
 import os
 
-DATA_DIR = '/media/zhuoli/Elements SE/Tem/xtrainer/datasets/tidying_up_bowls_0904'
+DATA_DIR = '/media/zhuoli/Elements SE/Tem/xtrainer/datasets/act_tidying_up_bowls_b_0919'
 TASK_CONFIGS = {
     # dobot move cube new
-        'tidying_up_bowls_0904': {
+        'act_tidying_up_bowls_b_0919': {
         'dataset_dir': DATA_DIR + '/train_data',
-        'episode_len': 2500,
+        'episode_len': 500,
         'train_ratio': 0.9,
         'camera_names': ['top', 'left_wrist', 'right_wrist']
     },

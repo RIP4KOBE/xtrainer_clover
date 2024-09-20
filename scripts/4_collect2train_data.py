@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Args:
-    dataset_name: str = "tidying_up_bowls_0909"
+    dataset_name: str = "act_tidying_up_bowls_b_0919"
     task_name: str = "dobot_task"
     MIRROR_STATE_MULTIPLY: list = (1, 1, 1, 1, 1, 1, 1)
     MIRROR_BASE_MULTIPLY: tuple = (1, 1)
