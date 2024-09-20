@@ -48,7 +48,6 @@ def load_ini_data_hands():
             joint_signs=[int(i) for i in ini_file.get(_hand, "joint_signs").split(",")],
             gripper_config=[int(i) for i in ini_file.get(_hand, "gripper_config").split(",")],
             start_joints=[float(i) for i in ini_file.get(_hand, "start_joints").split(",")])
-            # baud_rate=int(ini_file.get(_hand, "baud_rate")))
     return ini_file, hands_dict
 
 
@@ -114,7 +113,13 @@ def obs_action_check(env, agent):
 
 # nova2 dev joint check
 def servo_action_check(action, last_action, flag_in, step_len=0.9):
-    ind_list = [i for i in range(14)]
+    ind_list = []
+    if flag_in[0] and not flag_in[1]:
+        ind_list = [i for i in range(6)]
+    elif not flag_in[0] and flag_in[1]:
+        ind_list = [i+7 for i in range(6)]
+    elif flag_in[0] and flag_in[1]:
+        ind_list = [i for i in range(14)]
     assert len(ind_list), "err in servo_action_check"
     if (np.abs(action - last_action) > step_len).any():
         joint_index = np.where(np.abs(action - last_action) > step_len)
@@ -173,8 +178,6 @@ def dynamic_approach(env, agent, flag_in):
         # log_write(__file__, "flag_in: " + str(flag_in))
         # log_write(__file__, "jnt: " + str(jnt))
     # time.sleep(0.05)
-    err1, action1 = pose_check(env, agent, flag_in)
-    assert err1 != 0, set_light(env, "red", 1)
     return action1
 
 

@@ -25,8 +25,9 @@ class Args:
     hostname: str = "127.0.0.1"
     show_img: bool = False
     save_data_path = "/media/zhuoli/Elements SE/Tem/xtrainer/datasets/"
-    project_name = "tidying_up_bowls_0909"
-    agent_name = "act"
+    project_name = "dp_data_test_20240920"
+    agent_name = "dp"
+    dp_save_png = False
 
 # Thread button: [lock or nor, servo or not, record or not]
 # 0: lock, 1: unlock

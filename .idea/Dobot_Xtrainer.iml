@@ -6,7 +6,7 @@
       <sourceFolder url="file://$MODULE_DIR$/robomimic-r2d2" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/third_party/DynamixelSDK/python/src" isTestSource="false" />
     </content>
-    <orderEntry type="jdk" jdkName="Xtrainer" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Xtrainer_env" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="library" name="workspace" level="project" />
     <orderEntry type="library" name="ROS" level="project" />

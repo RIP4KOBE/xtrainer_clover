@@ -10,7 +10,7 @@ def get_config(which_hand, which_hand_config):
     gripper_ids = {"HAND_LEFT": [8], "HAND_RIGHT": [18]}
     driver =DynamixelDriver(ids=which_hand_config.joint_ids+gripper_ids[which_hand],
                             append_id=which_hand_config.append_id,
-                            port=which_hand_config.port)
+                            port=which_hand_config.port, baudrate=1000000)
     # driver.set_torque_mode(False)
     print("--------------------", which_hand, "-------------------")
     pos_joint = driver.get_joints()
