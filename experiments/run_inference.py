@@ -26,8 +26,8 @@ class Args:
     hostname: str = "127.0.0.1"
     show_img: bool = True
     agent_name: str = "dp"
-    act_ckpt_path: str = "./ckpt/act/dish_washing_20240814"
-    dp_ckpt_path: str = "./ckpt/dp/dish_washing_20d_20240911/last.ckpt"
+    act_ckpt_path: str = "./ckpt/act/tidying_up_bowls_abcefg_mix_0925"
+    dp_ckpt_path: str = "/home/zhuoli/xtrainer_clover/ModelTrain/ckpt/dp/dp_tidying_up_bowls_a_0920_3cam/last.ckpt"
     dp_model = None
     act_model = None
 
@@ -113,23 +113,27 @@ def main(args):
 
     else:
         # use ACT model
-        act_model_name = 'policy_last.ckpt'
-        act_model = Imitate_Model(ckpt_dir=args.act_ckpt_path, ckpt_name=act_model_name)
+        # act_model_name = 'policy_best.ckpt'# coaster
+        act_model_name = 'policy_last.ckpt'#zip（550）
+        # act_model = Imitate_Model(ckpt_dir=args.act_ckpt_path, ckpt_name=act_model_name)
+        act_model = Imitate_Model(ckpt_dir='./ckpt/act/tidying_up_bowls_abcefgh_mix_0925', ckpt_name=act_model_name)
+        # act_model = Imitate_Model(ckpt_dir='./ckpt/act/dish_washing_20240814', ckpt_name=act_model_name)
+        # act_model = Imitate_Model(ckpt_dir='./ckpt/act/pulling_the_zipper_ab_0926', ckpt_name=act_model_name)
         # act_model = Imitate_Model(ckpt_dir='./ckpt/act/tidying_up_coasters_0904', ckpt_name=act_model_name)
         act_model.loadModel()
         print("ACT model init success...")
 
-    episode_len = 1000  # The total number of steps to complete the task. Note that it must be less than or equal to parameter 'episode_len' of the corresponding task in file 'ModelTrain.constants'
+    episode_len = 750  # The total number of steps to complete the task. Note that it must be less than or equal to parameter 'episode_len' of the corresponding task in file 'ModelTrain.constants'
     t=0
     last_time = 0
 
     # Initialize the observation
-    observation = {'joint_positions': [], 'images': {'left_wrist': [], 'right_wrist': [], 'top': []}}
+    observation = {'qpos': [], 'images': {'left_wrist': [], 'right_wrist': [], 'top': []}}
     obs = env.get_obs()
     obs["joint_positions"][6] = 1.0  # Initial position of the gripper
     obs["joint_positions"][13] = 1.0
-    observation['joint_positions'] = obs["joint_positions"]  # Initial value of the joint
-    last_action = observation['joint_positions'].copy()
+    observation['qpos'] = obs["joint_positions"]  # Initial value of the joint
+    last_action = observation['qpos'].copy()
 
     first = True
 
@@ -151,7 +155,7 @@ def main(args):
         # Model inference,output joint value (radian)
         if args.agent_name == "dp":
             dp_observation = {'joint_positions': [], 'left_wrist_rgb': [], 'right_wrist_rgb': [], 'base_rgb': []}
-            dp_observation['joint_positions'] = observation['joint_positions']
+            dp_observation['joint_positions'] = observation['qpos']
             dp_observation['left_wrist_rgb'] = image_left
             dp_observation['right_wrist_rgb'] = image_right
             dp_observation['base_rgb'] = image_top
@@ -243,7 +247,7 @@ def main(args):
         # Obtain the current joint value of the robots (including the gripper)
         obs["joint_positions"][6] = action[6]   # In order to decrease acquisition time, the last action of the gripper is taken as its current observation
         obs["joint_positions"][13] = action[13]
-        observation['joint_positions'] = obs["joint_positions"]
+        observation['qpos'] = obs["joint_positions"]
 
         print("Read joint value time(ms)：", (time4 - time3) * 1000)
         t +=1

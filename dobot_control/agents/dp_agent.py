@@ -1,6 +1,7 @@
 import collections
 import json
 import os
+import time
 from typing import Any, Dict
 
 import numpy as np
@@ -178,17 +179,16 @@ class BimanualDPAgent:
             },
             "representation_type": ["img", "pos"],
             "identity_encoder": False,
-            # "camera_indices": [0, 1, 2],
-            "camera_indices": [0],
+            "camera_indices": [0, 1, 2],
             "obs_horizon": 4,
             "pred_horizon": 16,
             "action_horizon": 8,
-            "num_diffusion_iters": 15,
+            "num_diffusion_iters": 10,
             "without_sampling": False,
             "clip_far": False,
             "predict_eef_delta": False,
             "predict_pos_delta": False,
-            "use_ddim": False,
+            "use_ddim": True,
         }
 
     def compile_inference(self, example_obs, precision="high", num_inference_iters=5):
@@ -200,8 +200,6 @@ class BimanualDPAgent:
             self.act(example_obs)
 
     def act(self, obs: Dict[str, Any]) -> np.ndarray:
-        # curr_joint_pos = obs["qpos"]
-        # curr_eef_pose = obs["ee_pos_quat"]
         obs = self.dp.get_observation([obs], load_img=True)
         if "img" in obs:
             obs["img"] = self.dp.eval_transform(obs["img"].squeeze(0))
@@ -218,9 +216,12 @@ class BimanualDPAgent:
 
         # if action queue is empty, predict new actions
         else:
+            time1 = time.time()
             pred = self.dp.predict(
                 self.obsque, num_diffusion_iters=self.num_diffusion_iters
             )
+            time2 = time.time()
+            print("DP planning time", time2 - time1)
             for i in range(self.dp_args["action_horizon"]):
                 act = pred[i]
                 self.action_queue.append(act)
