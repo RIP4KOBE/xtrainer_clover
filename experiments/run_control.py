@@ -24,9 +24,9 @@ class Args:
     robot_port: int = 6001
     hostname: str = "127.0.0.1"
     show_img: bool = False
-    save_data_path = "/home/zhuoli/"
-    project_name = "assd"
-    agent_name = "act"
+    save_data_path = "/media/zhuoli/Elements SE/Tem/xtrainer/datasets/"
+    project_name = "FYP_10_16_Tidying_up_bowls"
+    agent_name = "dp"
     dp_save_png = False
 
 # Thread button: [lock or nor, servo or not, record or not]

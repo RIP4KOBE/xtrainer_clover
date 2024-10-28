@@ -18,7 +18,7 @@ class Args:
 
 def launch_robot_server(args: Args):
     port = args.robot_port
-    _robot_l = DobotRobot(robot_ip="192.168.5.1", robot_number=2)  # IP of the left hand robotic arm
+    _robot_l = DobotRobot(robot_ip="192.168.5.1", robot_number=1)  # IP of the left hand robotic arm
     _robot_r = DobotRobot(robot_ip="192.168.5.2", robot_number=2)  # IP of the rigth hand robotic arm
     robot = BimanualRobot(_robot_l, _robot_r)
     server = ZMQServerRobot(robot, port=port, host=args.hostname)

@@ -5,6 +5,17 @@
       <sourceFolder url="file://$MODULE_DIR$/ModelTrain/detr" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/robomimic-r2d2" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/third_party/DynamixelSDK/python/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/curigpt_ros/src/curigpt_ros" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/curigpt_ros/src/curigpt_ros/actions" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/curigpt_ros/src/curigpt_ros/models" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/curigpt_ros/src/curigpt_ros/utils" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/curigpt_ros" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/curigpt_ros/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/ModelTrain" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/ModelTrain/dp" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/curigpt_ros/config" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/curigpt_ros/scripts" isTestSource="false" />
     </content>
     <orderEntry type="jdk" jdkName="Xtrainer_env" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />

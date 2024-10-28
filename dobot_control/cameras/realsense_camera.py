@@ -4,6 +4,7 @@ import numpy as np
 from dobot_control.cameras.camera import CameraDriver
 import cv2
 import pyrealsense2 as rs
+import os
 
 def get_device_ids() -> List[str]:
 
@@ -29,11 +30,21 @@ class RealSenseCamera(CameraDriver):
         self._pipeline = rs.pipeline()
         config = rs.config()
         config.enable_device(device_id)
-
         config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 90)
         config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 90)
         self._pipeline.start(config)
         self._flip = flip
+        self.rgb_callback_flag = False
+        self.depth_callback_flag = False
+        # Last save times
+        self.last_rgb_save_time = time.time()
+        self.last_depth_save_time = time.time()
+        # Image save rate parameter
+        self.save_rate = 1  # Default to 1 Hz
+        self.rate = self.save_rate
+        self.image_count = 0
+        self.rgb_save_dir = "/home/zhuoli/xtrainer_clover/curigpt_ros/assets/img/realtime_rgb"
+        self.depth_save_dir = "/home/zhuoli/xtrainer_clover/curigpt_ros/assets/img/realtime_depth"
         # print(device_id)
         for _ in range(50):
             self.read()
@@ -58,6 +69,15 @@ class RealSenseCamera(CameraDriver):
         color_image = np.asanyarray(color_frame.get_data())
         depth_frame = frames.get_depth_frame()
         depth_image = np.asanyarray(depth_frame.get_data())
+
+        if self._device_id == "419122270852":
+            current_time = time.time()
+            if (current_time - self.last_rgb_save_time) > 1 / self.save_rate:
+                # Save images
+                cv2.imwrite(os.path.join(self.rgb_save_dir, "realtime_rgb_test.png"), color_image)
+                self.image_count += 1
+                self.last_rgb_save_time = time.time()
+
         # depth_image = cv2.convertScaleAbs(depth_image, alpha=0.03)
         if img_size is None:
             image = color_image[:, :, ::-1]

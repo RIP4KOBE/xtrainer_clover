@@ -9,12 +9,13 @@ import numpy as np
 import tyro
 import threading
 import torch
-
+import json
 from dobot_control.env import RobotEnv
 from dobot_control.robots.robot_node import ZMQClientRobot
 from dobot_control.cameras.realsense_camera import RealSenseCamera
 from dobot_control.agents.dp_agent import BimanualDPAgent
 
+from utils.Dp_action_calling import get_curi_response_with_audio, process_robot_actions
 from scripts.manipulate_utils import load_ini_data_camera
 
 from ModelTrain.module.model_module import Imitate_Model
@@ -63,9 +64,6 @@ def main(args):
     rs1 = RealSenseCamera(flip=False, device_id=camera_dict["left"])
     rs2 = RealSenseCamera(flip=True, device_id=camera_dict["right"])
     rs3 = RealSenseCamera(flip=True, device_id=camera_dict["top"])
-    # rs1 = RealSenseCamera(flip=False, device_id="130322270390")
-    # rs2 = RealSenseCamera(flip=True, device_id="130322272313")
-    # rs3 = RealSenseCamera(flip=True, device_id="130322272737")
     thread_cam_left = threading.Thread(target=run_thread_cam, args=(rs1, 0))
     thread_cam_right = threading.Thread(target=run_thread_cam, args=(rs2, 1))
     thread_cam_top = threading.Thread(target=run_thread_cam, args=(rs3, 2))
@@ -105,6 +103,117 @@ def main(args):
     for jnt in np.linspace(curr_joints, reset_joints, steps):
         env.step(jnt,np.array([1,1]))
 
+    # Call the MLM to determine the low_level action
+    with open('/home/zhuoli/xtrainer_clover/curigpt_ros/config/config.json', 'r') as config_file:
+        config = json.load(config_file)
+        # accessing configuration variables
+    api_key = config['openai_api_key']
+    base_url = config['base_url']
+    user_input_filename = config['user_input_filename']
+    curigpt_output_filename = config['curigpt_output_filename']
+    depth_img_path = config['depth_img_path']
+    rgb_img_path = config['rgb_img_path']
+    local_img_path1 = config['local_img_path1']
+    local_img_path2 = config['local_img_path2']
+    model_name = config['model_name']
+
+    base_multimodal_prompt = [
+        {
+            "role": "system",
+            "content": [{
+                "text": '''You are an excellent responser of human instructions for household tabletop tasks. Given an verbal instruction and an image, you respond to the human instruction and select appropriate robot actions if necessary. Note that you only need to focus on the partial area of the table top covered by a light green tablecloth in the image.
+
+                              Your response must be output in a structured JSON format and contain the following two keywords:
+                              - "robot_response" for the verbal response to the human instruction.
+                              - "robot_actions" for the description of the physical action you will perform, including the specific action name.
+                              Must add the "," delimiter between the two keywords to ensure proper JSON formatting.
+    
+                              Two robot actions are available to you:
+                              - tidying_up_bowl: The robot first grasps the spoon and places it into the bowl, then picks up the bowl's lid and puts it on the bowl.
+                              - tidying_up_coaster: The robot picks up the coaster and places it into its black case.
+                              Note that the choice of action should be made by yourself according to the objects in the image you see. You need to choose the most reasonable action.'''
+            }]
+        },
+        {
+            "role": "user",
+            "content": [
+                {"image": local_img_path1},
+                {"text": "hey, what do you see right now?"},
+            ]
+        },
+        {
+            "role": "assistant",
+            "content": [{
+                "text": json.dumps({
+                    "robot_response": "Now I see a table whose top is covered by a light green tablecloth, and a bowl is in the center of the table. There is also a spoon and a lid left and right to the bowl respectively.",
+                    "robot_actions": None
+                }, indent=4)
+            }]
+        },
+        {
+            "role": "user",
+            "content": [
+                {"image": local_img_path1},
+                {"text": "Can you help me tidy up the table?"}
+            ]
+        },
+        {
+            "role": "assistant",
+            "content": [{
+                "text": json.dumps({
+                    "robot_response": "Sure, I will first pick the spoon, then place it in the bowl, and finally pick and put the lid on the bowl.",
+                    "robot_actions": [
+                        {
+                            "action": "tidying_up_bowl"
+                        }
+                    ]
+                }, indent=4)
+            }]
+        },
+        {
+            "role": "user",
+            "content": [
+                {"image": local_img_path2},
+                {"text": "hey, what do you see right now?"}
+            ]
+        },
+        {
+            "role": "assistant",
+            "content": [{
+                "text": json.dumps({
+                    "robot_response": "Now I see a table whose top is covered by a light green tablecloth, a blue coaster placed on the table, and a coaster's black case in front of the coaster.",
+                    "robot_actions": None
+                }, indent=4)
+            }]
+        },
+        {
+            "role": "user",
+            "content": [
+                {"image": local_img_path2},
+                {"text": "Can you help me tidy up the table?"}
+            ]
+        },
+        {
+            "role": "assistant",
+            "content": [{
+                "text": json.dumps({
+                    "robot_response": "Sure, I will pick the coaster and then place it into its case.",
+                    "robot_actions": [
+                        {
+                            "action": "tidying_up_coaster"
+                        }
+                    ]
+                }, indent=4)
+            }]
+        }
+    ]
+
+    model_path = get_curi_response_with_audio(model_name, api_key, base_url, user_input_filename, curigpt_output_filename,
+                                              rgb_img_path,
+                                              depth_img_path,local_img_path1,
+                                  base_multimodal_prompt, rounds=10,
+                                 realtime_flag=True, prompt_append=False)
+
     # Initialize the inference model
     if args.agent_name == "dp":
        # use DP model
@@ -113,17 +222,12 @@ def main(args):
 
     else:
         # use ACT model
-        # act_model_name = 'policy_best.ckpt'# coaster
         act_model_name = 'policy_last.ckpt'#zip（550）
-        # act_model = Imitate_Model(ckpt_dir=args.act_ckpt_path, ckpt_name=act_model_name)
-        act_model = Imitate_Model(ckpt_dir='./ckpt/act/tidying_up_coaster', ckpt_name=act_model_name)
-        # act_model = Imitate_Model(ckpt_dir='./ckpt/act/dish_washing_20240814', ckpt_name=act_model_name)
-        # act_model = Imitate_Model(ckpt_dir='./ckpt/act/pulling_the_zipper_ab_0926', ckpt_name=act_model_name)
-        # act_model = Imitate_Model(ckpt_dir='./ckpt/act/tidying_up_coasters_0904', ckpt_name=act_model_name)
+        act_model = Imitate_Model(ckpt_dir=model_path, ckpt_name=act_model_name)
         act_model.loadModel()
         print("ACT model init success...")
 
-    episode_len = 750  # The total number of steps to complete the task. Note that it must be less than or equal to parameter 'episode_len' of the corresponding task in file 'ModelTrain.constants'
+    episode_len = 500  # The total number of steps to complete the task. Note that it must be less than or equal to parameter 'episode_len' of the corresponding task in file 'ModelTrain.constants'
     t=0
     last_time = 0
 
