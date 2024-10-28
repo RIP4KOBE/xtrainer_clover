@@ -1,0 +1,11 @@
+{
+    "openai_api_key": "sk-jHCEkHVMSAsl0es6B6E0909f612745098dFb77Ab5e83C010",
+    "base_url": "https://www.jcapikey.com/v1",
+    "user_input_filename": "/home/zhuoli/xtrainer_clover/curigpt_ros/assets/chat_audio/user_input.wav",
+    "curigpt_output_filename": "/home/zhuoli/xtrainer_clover/curigpt_ros/assets/chat_audio/curigpt_output.mp3",
+    "rgb_img_path": "/home/zhuoli/xtrainer_clover/curigpt_ros/assets/img/realtime_rgb/realtime_rgb_test.png",
+    "depth_img_path": "/home/zhuoli/xtrainer_clover/curigpt_ros/assets/img/realtime_depth/realtime_depth.png",
+    "local_img_path1": "/home/zhuoli/xtrainer_clover/curigpt_ros/assets/img/local_rgb_test_bowl.png",
+    "local_img_path2": "/home/zhuoli/xtrainer_clover/curigpt_ros/assets/img/local_rgb_test_coaster.png",
+    "model_name": "qwen-vl-max"
+}

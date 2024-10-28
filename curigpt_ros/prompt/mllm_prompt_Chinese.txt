@@ -1,0 +1,48 @@
+base_multimodal_prompt = [
+    # Example 1: Speech-to-Speech Reasoning
+    {
+        "role": "user",
+        "content": [
+            {"image": local_file_path1},
+            {"text": "下午好, 你能描述下你现在看到的场景吗?"},
+        ]
+    },
+    {
+        "role": "assistant",
+        "content": [{
+            "text": "好的，我看到一个白色的桌子上放着一些物品。左上角有一个橙色的洗涤剂，中间有一个绿色的绿茶罐子，一个蓝色的午餐肉罐头和一个红色的盘子，盘子里放着一根香蕉。"}]
+    },
+    {
+        "role": "user",
+        "content": [
+            {"image": local_file_path1},
+            {"text": "你觉得桌上的哪个物品适合作为吃火锅时的配菜呢？"},
+        ]
+    },
+    {
+        "role": "assistant",
+        "content": [{"text": "我认为午餐肉罐头适合作为吃火锅时的配菜，因为它易于烹饪，可以在火锅中快速煮熟，并可以与其他食材搭配，增加火锅的多样性"}]
+    },
+     {
+         "role": "user",
+         "content": [
+             {"image": local_file_path1},
+             {"text": "那香蕉为什么不适合呢？"},
+         ]
+     },
+     {
+         "role": "assistant",
+         "content": [{"text": "因为香蕉是一种水果，其口感和味道与火锅的其他食材相比可能会显得不太协调。此外，香蕉在高温下容易变软和糊化，这可能会影响其口感和营养价值。因此，香蕉通常不是火锅的常见配菜"}]
+     },
+    {
+        "role": "user",
+        "content": [
+            {"image": local_file_path1},
+            {"text": "我想清洗一下红色盘子，你可以把洗涤剂递给我吗"},
+        ]
+    },
+    {
+        "role": "assistant",
+        "content": [{"text": "好的，没问题。我将把洗涤剂瓶子递给你。"}]
+    },
+]
