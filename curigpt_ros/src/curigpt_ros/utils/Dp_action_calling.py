@@ -114,6 +114,16 @@ def get_curi_response_with_audio(model_name, api_key, base_url, user_input, curi
         # Ensure all threads are cleaned up properly
         print("Processing complete.")
 
+def get_MLLM_response_with_audio_demo(model_name, api_key,base_url, user_input, curigpt_output):
+    assistant = AudioAssistant(api_key, base_url, user_input, curigpt_output)
+    assistant.record_audio()
+    verbal_response = "Sure, I will first pick the spoon, then place it in the bowl, and finally pick and put the lid on the bowl."
+    assistant.text_to_speech(verbal_response)
+    print("CURI audio response:\n", verbal_response)
+    return "./ckpt/act/tidying_up_bowl"
+
+
+
 def process_robot_actions(action_response):
     # Map each action to its corresponding function
     action_map = {
