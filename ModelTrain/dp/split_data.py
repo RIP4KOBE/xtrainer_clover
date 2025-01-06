@@ -132,8 +132,8 @@ def split_symlink_dataset(root, num_trajs):
 
 if __name__ == "__main__":
     arg = argparse.ArgumentParser()
-    arg.add_argument("--base_path", type=str, default="/media/zhuoli/Elements SE/Tem/xtrainer/datasets/dp_test_20240820")
-    arg.add_argument("--output_path", type=str, default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data")
+    arg.add_argument("--base_path", type=str, default="/home/zhuoli/dobot_xtrainer/datasets/dual_franka_dataset")
+    arg.add_argument("--output_path", type=str, default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data_ldx")
     arg.add_argument(
         "--data_name",
         nargs="+",
@@ -142,7 +142,7 @@ if __name__ == "__main__":
             "collect_data",
         ],
     )
-    arg.add_argument("--num_trajs", nargs="+", type=int, default=[10, 25, 50, 75])
+    arg.add_argument("--num_trajs", nargs="+", type=int, default=[])
     arg.add_argument("--merge", action="store_true")
     arg.add_argument("--merge_name", type=str, default="data_banana_all")
     arg.add_argument("--num_traj_per_task", type=int, default=20)

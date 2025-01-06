@@ -153,7 +153,7 @@ class BimanualDPAgent:
         self.dp.load(ckpt_path)
         self.action_queue = collections.deque(maxlen=dp_args["action_horizon"])
         self.max_length = 100
-        self.count = 0
+        self.count = 1
         self.except_thumb_hand_indices = np.array([6, 7, 8, 9, 18, 19, 20, 21])
         self.binaraize_finger_action = binarize_finger_action
         self.clip_far = dp_args["clip_far"]
@@ -199,7 +199,7 @@ class BimanualDPAgent:
         for i in range(25):  # burn in
             self.act(example_obs)
 
-    def act(self, obs: Dict[str, Any]) -> np.ndarray:
+    def act(self, obs: Dict[str, Any], use_optimizer=False) -> np.ndarray:
         # curr_joint_pos = obs["qpos"]
         # curr_eef_pose = obs["ee_pos_quat"]
         obs = self.dp.get_observation([obs], load_img=True)
@@ -219,8 +219,12 @@ class BimanualDPAgent:
         # if action queue is empty, predict new actions
         else:
             pred = self.dp.predict(
-                self.obsque, num_diffusion_iters=self.num_diffusion_iters
-            )
+                self.obsque, num_diffusion_iters=self.num_diffusion_iters, use_optimizer=use_optimizer,
+            pred_count = self.count)
+
+            # count pridiction times
+            self.count += 1
+
             for i in range(self.dp_args["action_horizon"]):
                 act = pred[i]
                 self.action_queue.append(act)

@@ -10,7 +10,7 @@ import numpy as np
 def from_pickle(path, load_img = True, num_cam = 3):
     with open(path, "rb") as f:
         data = pickle.load(f)
-    if "base_rgb" not in data and load_img:
+    if "first_camera" not in data and load_img:
         rgb = []
         for i in range(num_cam):
             rgb_path = path.replace(".pkl", f"-{i}.png")

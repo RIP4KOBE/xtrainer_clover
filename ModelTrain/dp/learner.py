@@ -3,15 +3,19 @@ import copy
 import os
 
 import numpy as np
-import torch
 from diffusers.optimization import get_scheduler
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+from ModelTrain.dp.scheduler.Sampling_DDPMScheduler import SamplingDDPMScheduler
+from ModelTrain.manipulability.bimanual_manip_learning import GMRModel
+from ModelTrain.dp.optimizer.manipulability_optimizer import ManipulabilityOptimizer
 from diffusers.training_utils import EMAModel
 from ModelTrain.dp.models import *
 from torch.nn.functional import mse_loss
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
+from typing import Tuple
+from omegaconf import OmegaConf
 
 
 def normalize_data(data, stats):
@@ -113,6 +117,15 @@ class DiffusionPolicy:
             params=self.nets.parameters(), lr=1e-4, weight_decay=weight_decay
         )
 
+        # Manipulability optimizer
+        self.sampling_optimizer = ManipulabilityOptimizer()
+        # Parameters for Manipulability-guided sampling
+        cfg = OmegaConf.load("/home/zhuoli/dobot_xtrainer/ModelTrain/config/optimizer.yaml")
+        self.gmm_ckpt_path = cfg.gmm_ckpt_path
+        self.gmr_model = GMRModel(self.gmm_ckpt_path)
+        self.dt = 1E-1  # Time step for GMR prediction
+
+
     def set_lr_scheduler(self, num_training_steps):
         # Cosine LR schedule with linear warmup
         self.lr_scheduler = get_scheduler(
@@ -138,6 +151,7 @@ class DiffusionPolicy:
         eval_freq=10,
         wandb_logger=None,
         eval=False,
+        sampling_eval=False,
     ):
         if eval:
             nets = self.ema_nets
@@ -163,6 +177,7 @@ class DiffusionPolicy:
                         naction = nbatch["action"].to(self.device)
                         B = naction.shape[0]
                         features = []
+                        pred_count = 1
 
                         ### IMPT: make sure input is always in this order
                         # eef, hand_pos, img, pos, touch
@@ -239,39 +254,67 @@ class DiffusionPolicy:
                                 noisy_action = noise
                                 pred_action = noisy_action
 
-                                self.noise_scheduler.set_timesteps(
-                                    self.num_diffusion_iters
-                                )
+                                if sampling_eval:
+                                    print("Manipulability-guided sampling")
+                                    xIn = torch.tensor(pred_count * self.action_horizon * self.dt)
+                                    # Predict manipulability ellipsoid for the current time step using GMR
+                                    M_t_pred, _ = self.gmr_model.gmr_regression(xIn)  # Predicted manipulability
+                                    # ellipsoid (B, 3, 3)
+                                    M_t_pred = self.gmr_model.vec2symmat(M_t_pred)
+                                    pred_action = self.p_sample_loop(pred_action, obs_cond, M_t_pred)
+                                    pred_count += 1
 
-                                for k in self.noise_scheduler.timesteps:
-                                    # predict noise
-                                    noise_pred = nets["noise_pred_net"](
-                                        sample=pred_action,
-                                        timestep=k,
-                                        global_cond=obs_cond,
+                                else:
+                                    self.noise_scheduler.set_timesteps(
+                                        self.num_diffusion_iters
                                     )
 
-                                    # inverse diffusion step (remove noise)
-                                    pred_action = self.noise_scheduler.step(
-                                        model_output=noise_pred,
-                                        timestep=k,
-                                        sample=pred_action,
-                                    ).prev_sample
+                                    for k in self.noise_scheduler.timesteps:
+                                        # predict noise
+                                        noise_pred = nets["noise_pred_net"](
+                                            sample=pred_action,
+                                            timestep=k,
+                                            global_cond=obs_cond,
+                                        )
 
-                                loss = nn.functional.mse_loss(naction, pred_action)
+                                        # inverse diffusion step (remove noise)
+                                        pred_action = self.noise_scheduler.step(
+                                            model_output=noise_pred,
+                                            timestep=k,
+                                            sample=pred_action,
+                                        ).prev_sample
 
-                                unnormalized_naction = unnormalize_data(
-                                    naction.detach().cpu().numpy(),
-                                    self.data_stat["action"],
-                                )
-                                unnormalized_pred_action = unnormalize_data(
-                                    pred_action.detach().cpu().numpy(),
-                                    self.data_stat["action"],
-                                )
-                                unnormalized_loss = nn.functional.mse_loss(
-                                    torch.tensor(unnormalized_naction),
-                                    torch.tensor(unnormalized_pred_action),
-                                )
+
+                                if sampling_eval:
+                                    loss = nn.functional.mse_loss(naction[0], pred_action[0])
+                                    unnormalized_naction = unnormalize_data(
+                                        naction[0].detach().cpu().numpy(),
+                                        self.data_stat["action"],
+                                    )
+                                    unnormalized_pred_action = unnormalize_data(
+                                        pred_action[0].detach().cpu().numpy(),
+                                        self.data_stat["action"],
+                                    )
+                                    unnormalized_loss = nn.functional.mse_loss(
+                                        torch.tensor(unnormalized_naction),
+                                        torch.tensor(unnormalized_pred_action),
+                                    )
+
+                                else:
+                                    loss = nn.functional.mse_loss(naction, pred_action)
+                                    unnormalized_naction = unnormalize_data(
+                                        naction.detach().cpu().numpy(),
+                                        self.data_stat["action"],
+                                    )
+                                    unnormalized_pred_action = unnormalize_data(
+                                        pred_action.detach().cpu().numpy(),
+                                        self.data_stat["action"],
+                                    )
+                                    unnormalized_loss = nn.functional.mse_loss(
+                                        torch.tensor(unnormalized_naction),
+                                        torch.tensor(unnormalized_pred_action),
+                                    )
+
 
                         if not eval:
                             # optimize
@@ -290,6 +333,7 @@ class DiffusionPolicy:
                         loss_cpu = loss.item()
                         epoch_loss.append(loss_cpu)
                         tepoch.set_postfix(loss=loss_cpu)
+
                 tglobal.set_postfix(loss=np.mean(epoch_loss))
                 if self.writer is not None:
                     self.writer.add_scalar("Loss", np.mean(epoch_loss), epoch_idx)
@@ -503,7 +547,159 @@ class DiffusionPolicy:
 
         return action
 
-    def eval_loader(self, eval_loader):
+    @torch.no_grad()
+    def sample_with_optimizer(self, stats, obs_deque, pred_count):
         self.ema_nets.eval()
-        mse = self.train(num_epochs=1, dataloader=eval_loader, eval=True)
+
+        with torch.no_grad():
+            features = []
+
+            ### IMPT: make sure input is always in this order
+            # eef, hand_pos, img, pos, touch
+            for data_key in [
+                dk
+                for dk in ["eef", "hand_pos", "img", "pos", "touch"]
+                if dk in self.representation_type
+            ]:
+                sample = self._get_data_forward(stats, obs_deque, data_key)
+                if data_key == "img":
+                    images = [
+                        sample[:, :, i] for i in range(sample.shape[2])
+                    ]  # [1, obs_horizon, M, C, H, W]
+                    image_features = [
+                        self.ema_nets[f"{data_key}_encoder"][i](
+                            image.flatten(end_dim=1)
+                        )
+                        for i, image in enumerate(images)
+                    ]
+                    image_features = torch.stack(image_features, dim=2)
+                    image_features = image_features.reshape(*sample.shape[:2], -1)
+                    features.append(image_features)
+                else:
+                    feat = self.ema_nets[f"{data_key}_encoder"](
+                        sample.flatten(end_dim=1)
+                    )
+                    feat = feat.reshape(*sample.shape[:2], -1)
+                    features.append(feat)
+
+            obs_features = torch.cat(features, dim=-1)
+            obs_cond = obs_features.flatten(start_dim=1)
+
+            # sample noise to add to actions
+            noisy_action = torch.randn(
+                (1, self.pred_horizon, self.action_dim), device=self.device
+            )
+            naction = noisy_action
+
+            xIn = torch.tensor(pred_count * self.action_horizon * self.dt)
+            # Predict manipulability ellipsoid for the current time step using GMR
+            M_t_pred, _ = self.gmr_model.gmr_regression(xIn)  # Predicted 3x3 manipulability ellipsoid
+            M_t_pred = self.gmr_model.vec2symmat(M_t_pred)
+            naction = self.p_sample_loop(naction, obs_cond, M_t_pred)
+
+        # unnormalize action
+        naction = naction.detach().to("cpu").numpy()
+        # (B, pred_horizon, action_dim)
+        naction = naction[0]
+        action_pred = unnormalize_data(naction, stats=stats["action"])
+
+        # only take action_horizon number of actions
+        start = self.obs_horizon - 1
+        end = start + self.action_horizon
+        action = action_pred[start:end, :]
+
+        return action
+
+    @torch.no_grad()
+    def p_sample_loop(self, noisy_action, obs_cond, M_t_pred) -> torch.Tensor:
+        """ Reverse diffusion process loop, iteratively sampling
+
+        Args:
+            data: test data, data['x'] gives the target data shape
+
+        Return:
+            Sampled data, <B, T, ...>
+        """
+        pred_action = noisy_action
+        for t in reversed(range(0, self.num_diffusion_iters)):
+            x_t = pred_action
+            pred_action = self.p_sample(x_t, t, obs_cond, M_t_pred)
+
+        return pred_action
+
+    @torch.no_grad()
+    def p_sample(self, x_t: torch.Tensor, t: int, obs_cond: torch.Tensor, M_t_pred: torch.Tensor) -> torch.Tensor:
+        """ One step of reverse diffusion process
+
+        $x_{t-1} = \tilde{\mu} + \sqrt{\tilde{\beta}} * z$
+
+        Args:
+            x_t: denoised sample at timestep t
+            t: denoising timestep
+            data: data dict that provides original data and computed conditional feature
+
+        Return:
+            Predict data in the previous step, i.e., $x_{t-1}$
+        """
+        model_mean, model_variance = self.p_mean_variance(x_t, t, obs_cond)
+        ## sampling with mean updated by optimizer and planner
+        ## openai guided diffusion uses the input x to compute gradient, see
+        ## https://github.com/openai/guided-diffusion/blob/22e0df8183507e13a7813f8d38d51b072ca1e67c/guided_diffusion/gaussian_diffusion.py#L436
+        gradient = self.sampling_optimizer.gradient(model_mean, model_variance, M_t_pred)
+        print(f"Gradient: {gradient[0]}")
+        model_mean[0] = model_mean[0] + gradient[0]
+        # model_mean = model_mean + gradient
+
+        # equation for sampling from Gaussian distribution: x=μ+L⋅z
+        # pred_x = model_mean + (0.5 * model_log_variance).exp() * noise
+        pred_x = model_mean + model_variance
+
+        return pred_x
+
+    def p_mean_variance(self, x_t: torch.Tensor, t: torch.Tensor, cond: torch.Tensor) -> Tuple:
+        """ Calculate the mean and variance, we adopt the following first equation.
+
+        $\tilde{\mu} = \frac{\sqrt{\alpha_t}(1-\bar{\alpha}_{t-1})}{1-\bar{\alpha}_t}x_t + \frac{\sqrt{\bar{\alpha}_{t-1}}\beta_t}{1 - \bar{\alpha}_t}x_0$
+        $\tilde{\mu} = \frac{1}{\sqrt{\alpha}_t}(x_t - \frac{1 - \alpha_t}{\sqrt{1 - \bar{\alpha}_t}}\epsilon_t)$
+
+        Args:
+            x_t: denoised sample at timestep t
+            t: denoising timestep
+            cond: condition tensor
+
+        Return:
+            (model_mean, posterior_variance, posterior_log_variance)
+        """
+        pred_noise = self.ema_nets["noise_pred_net"](
+            sample=x_t, timestep=t, global_cond=cond
+        )
+
+        self.noise_scheduler = SamplingDDPMScheduler(
+            num_train_timesteps=self.num_diffusion_iters,
+            # the choise of beta schedule has big impact on performance
+            # we found squared cosine works the best
+            beta_schedule="squaredcos_cap_v2",
+            # clip output to [-1,1] to improve stability
+            clip_sample=True,
+            # our network predicts noise (instead of denoised action)
+            prediction_type="epsilon",
+        )
+
+        # pred_x0 = self.scheduler.step(
+        #     model_output=pred_noise, timestep=t, sample=x_t
+        # ).pred_original_sample
+
+        model_mean = self.noise_scheduler.step(
+            model_output=pred_noise, timestep=t, sample=x_t
+        ).prev_sample
+
+        posterior_variance = self.noise_scheduler.step(
+            model_output=pred_noise, timestep=t, sample=x_t
+        ).variance
+
+        return model_mean, posterior_variance
+
+    def eval_loader(self, eval_loader, sampling=False):
+        self.ema_nets.eval()
+        mse = self.train(num_epochs=1, dataloader=eval_loader, eval=True, sampling_eval=sampling)
         return mse

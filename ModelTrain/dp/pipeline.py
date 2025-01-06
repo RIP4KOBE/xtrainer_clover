@@ -148,6 +148,7 @@ class Agent:
                 transforms.Resize(
                     (240, 320),
                     interpolation=transforms.InterpolationMode.BILINEAR,
+                    antialias=True
                 ),
             )
 
@@ -411,16 +412,20 @@ class Agent:
                 input_data[rt] = np.stack([d[rt] for d in data])
         return input_data
 
-    def predict(self, obs_deque: collections.deque, num_diffusion_iters=15):
+    def predict(self, obs_deque: collections.deque, num_diffusion_iters=15, use_optimizer=False, pred_count=1):
         """
         data: dict
             data['image']: torch.tensor (1,5,224,224)
             data['touch']: torch.tensor (1,6)
             data['pos']: torch.tensor (1,24)
         """
-        pred = self.policy.forward(
-            self.stats, obs_deque, num_diffusion_iters=num_diffusion_iters
-        )
+        if use_optimizer:
+            pred = self.policy.sample_with_optimizer(
+                self.stats, obs_deque, num_diffusion_iters=num_diffusion_iters, pred_count=pred_count)
+        else:
+            pred = self.policy.forward(
+                self.stats, obs_deque, num_diffusion_iters=num_diffusion_iters
+            )
         return pred
 
     def _get_init_train_data(self, total_data_points, memmap_loader_path=""):
@@ -493,7 +498,6 @@ class Agent:
 
             # images - (N, num_cams, self.image_channel, 240, 320)
             obs = self.get_observation(data, self.load_img or cache_memmap)
-            print("test1")
 
             # obs space
             for rt in self.representation_type:
@@ -707,10 +711,10 @@ class Agent:
         eval_loader = self.get_train_loader(batch_size, "", eval=True)
         return eval_loader
 
-    def eval_dir(self, eval_loader, num_diffusion_iters=15):
+    def eval_dir(self, eval_loader, num_diffusion_iters=15, sampling=False):
         self.policy.num_diffusion_iters = num_diffusion_iters
         with torch.no_grad():
-            mse, action_mse = self.policy.eval_loader(eval_loader)
+            mse, action_mse = self.policy.eval_loader(eval_loader, sampling=sampling)
         print(f"MSE: {mse}", f"ACTION_MSE: {action_mse}")
         return mse, action_mse
 

@@ -1,5 +1,8 @@
 import sys
 import os
+
+from detectron2.model_zoo.configs.Misc.torchvision_imagenet_R_50 import optimizer
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))+"/ModelTrain/"
 sys.path.append(BASE_DIR)
 import cv2
@@ -30,6 +33,7 @@ class Args:
     dp_ckpt_path: str = "./ckpt/dp/dish_washing_20d_20240911/last.ckpt"
     dp_model = None
     act_model = None
+    use_optimizer = True
 
 
 image_left,image_right,image_top,thread_run=None,None,None,None
@@ -155,7 +159,9 @@ def main(args):
             dp_observation['left_wrist_rgb'] = image_left
             dp_observation['right_wrist_rgb'] = image_right
             dp_observation['base_rgb'] = image_top
-            action = dp_model.act(dp_observation)
+
+            use_optimizer = args.use_optimizer
+            action = dp_model.act(dp_observation, use_optimizer)
 
         else:
             action = act_model.predict(observation,t)

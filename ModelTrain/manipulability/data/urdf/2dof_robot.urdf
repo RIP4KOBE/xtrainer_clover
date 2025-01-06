@@ -1,0 +1,26 @@
+<?xml version="1.0" ?>
+<robot name="2DOF Robot">
+<link name="base"/>
+<link name="link1"/>
+<link name="link2"/>
+<link name="end_effector"/>
+<joint name="joint1" type="revolute">
+<parent link="base"/>
+<child link="link1"/>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+<axis xyz="0 0 1"/>
+<limit lower="-3.14" upper="3.14" effort="100" velocity="1"/>
+</joint>
+<joint name="joint2" type="revolute">
+<parent link="link1"/>
+<child link="link2"/>
+<origin xyz="1 0 0" rpy="0 0 0"/>
+<axis xyz="0 0 1"/>
+<limit lower="-3.14" upper="3.14" effort="100" velocity="1"/>
+</joint>
+<joint name="joint3" type="fixed">
+<parent link="link2"/>
+<child link="end_effector"/>
+<origin xyz="1 0 0" rpy="0 0 0"/>
+</joint>
+</robot>

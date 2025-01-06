@@ -1,0 +1,21 @@
+# Device configuration
+device: "cuda"  # Device to use for computation, e.g., "cuda" for GPU or "cpu"
+
+# Time horizon configuration
+obs_horizon: 1         # Observation horizon: number of past time steps to consider
+action_horizon: 8       # Action horizon: number of future time steps to predict or act upon
+
+# Optimization-related configuration
+scale: 1.0              # Gradient scaling factor
+scale_type: "normal"    # Gradient scaling type: "normal" (scaled by variance) or "div_var"
+clip_grad_by_value:     # Gradient clipping range to avoid exploding gradients
+  min: -1.0             # Minimum gradient clipping value
+  max: 1.0              # Maximum gradient clipping value
+
+# Manipulability-related configuration
+task_dim: 3             # Task space dimension, typically 3 (for 3D space)
+scaling: true           # Whether to apply scaling when computing the Jacobian
+manipulability_weight: 1.0  # Weight for manipulability loss in the optimization process
+
+gmm_ckpt_path: '/home/zhuoli/dobot_xtrainer/ModelTrain/manipulability/ckpt/gmm_ckpt.pth'
+robot_urdf_path: '/home/zhuoli/dobot_xtrainer/ModelTrain/manipulability/data/urdf/nova2_robot.urdf'
