@@ -24,9 +24,10 @@ class Args:
     robot_port: int = 6001
     hostname: str = "127.0.0.1"
     show_img: bool = False
-    save_data_path = "/home/zhuoli/"
-    project_name = "assd"
-    agent_name = "act"
+    # save_data_path = "/media/zhuoli/5HYSSD/xtrainer/datasets/manidp_experiments/"
+    save_data_path = "/media/zhuoli/5hyDrive/xtrainer/datasets"
+    project_name = "dp_tower_hanging_20250212"
+    agent_name = "dp"
     dp_save_png = False
 
 # Thread button: [lock or nor, servo or not, record or not]

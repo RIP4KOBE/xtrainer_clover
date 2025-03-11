@@ -21,7 +21,7 @@ from ModelTrain.dp.models import GaussianNoise, ImageEncoder, StateEncoder
 from torch import nn
 from torch.nn import ModuleList
 from torchvision import transforms
-from utils import WandBLogger, generate_random_string, get_eef_delta, save_args
+from dp.utils import WandBLogger, generate_random_string, get_eef_delta, save_args
 
 LEFT_XTRAINER_IDX = list(range(0, 6))
 RIGHT_XTRAINER_IDX = list(range(12, 18))

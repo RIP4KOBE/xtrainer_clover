@@ -27,7 +27,9 @@ class Args:
     show_img: bool = True
     agent_name: str = "dp"
     act_ckpt_path: str = "./ckpt/act/tidying_up_bowls_abcefg_mix_0925"
-    dp_ckpt_path: str = "/home/zhuoli/xtrainer_clover/ModelTrain/ckpt/dp/dp_tidying_up_bowls_a_0920_3cam/last.ckpt"
+    # dp_ckpt_path: str = "/home/zhuoli/xtrainer_clover/ModelTrain/ckpt/dp/dp_tidying_up_bowls_a_0920_3cam/last.ckpt"
+    # dp_ckpt_path: str = "/media/zhuoli/5HYSSD/xtrainer/ModelTrain/dp/model/manidp_experiments/dp_plug_removal_20250210/last.ckpt"
+    dp_ckpt_path: str = "/media/zhuoli/5HYSSD/xtrainer/ModelTrain/dp/model/manidp_experiments/manidp_tower_hanging_20250212/last.ckpt"
     dp_model = None
     act_model = None
 
@@ -123,7 +125,7 @@ def main(args):
         act_model.loadModel()
         print("ACT model init success...")
 
-    episode_len = 750  # The total number of steps to complete the task. Note that it must be less than or equal to parameter 'episode_len' of the corresponding task in file 'ModelTrain.constants'
+    episode_len = 200  # The total number of steps to complete the task. Note that it must be less than or equal to parameter 'episode_len' of the corresponding task in file 'ModelTrain.constants'
     t=0
     last_time = 0
 
@@ -183,7 +185,9 @@ def main(args):
 
         delta = action-last_action
         print("Joint increment：",delta)
-        if max(delta[0:6])>0.17 or max(delta[7:13])>0.17: # 增量大于10度
+        # if max(delta[0:6])>0.17 or max(delta[7:13])>0.17: # 增量大于10度
+        if None: # 增量大于10度
+
             print("Note!If the joint increment is larger than 10 degrees!!!")
             print("Do you want to continue running? Press the 'Y' key to continue, otherwise press the other button to stop the program!")
             temp_img = np.zeros(shape=(640, 480))
@@ -204,11 +208,11 @@ def main(args):
 
         # Left arm joint angle limitations:  -150<J3<0    J4>-35  (Note: This angle needs to be converted to radians)
         # right arm joint angle limitations:  150>J3>0    J4<35   (Note: This angle needs to be converted to radians)
-        if not ((action[2] > -2.6 and action[2] < 0 and action[3] > -0.6) and \
-                (action[9] < 2.6 and action[9] > 0 and action[10] < 0.6)):
-            print("[Warn]:The J3 or J4 joints of the robotic arm are out of the safe position! ")
-            print(action)
-            protect_err = True
+        # if not ((action[2] > -2.6 and action[2] < 0 and action[3] > -0.6) and \
+        #         (action[9] < 2.6 and action[9] > 0 and action[10] < 0.6)):
+        #     print("[Warn]:The J3 or J4 joints of the robotic arm are out of the safe position! ")
+        #     print(action)
+        #     protect_err = True
 
         # left arm (jaw tip position) limit:  210>x>-410  -700<Y<-210  z>47;
         # right arm (jaw tip position) limit:  410>x>-210  -700<Y<-210  z>47;
