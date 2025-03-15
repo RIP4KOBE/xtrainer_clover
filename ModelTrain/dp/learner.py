@@ -41,7 +41,7 @@ class DiffusionPolicy:
         num_diffusion_iters=100,
         without_sampling=False,
         weight_decay=1e-6,
-        use_ddim=False,
+        use_ddim=True,
         binarize_touch=False,
         policy_dropout_rate=0.0,
     ):
@@ -507,3 +507,226 @@ class DiffusionPolicy:
         self.ema_nets.eval()
         mse = self.train(num_epochs=1, dataloader=eval_loader, eval=True)
         return mse
+
+
+    def run_diffusion_es(self, stats, obs_deque, num_diffusion_iters=None, constraints=None,
+                         use_cem=False, cem_iters=20,
+                         num_elites=32,
+                         temperature=0.1,):
+        self.ema_nets.eval()
+
+        if not num_diffusion_iters:
+            num_diffusion_iters = self.num_diffusion_iters
+
+        if constraints is None:
+            constraints = self.generate_constraints()
+
+        with torch.no_grad():
+            features = []
+            self.sampling_batch_size = 128
+
+            ### IMPT: make sure input is always in this order
+            # eef, hand_pos, img, pos, touch
+            for data_key in [
+                dk
+                for dk in ["eef", "hand_pos", "img", "pos", "touch"]
+                if dk in self.representation_type
+            ]:
+                sample = self._get_data_forward(stats, obs_deque, data_key)
+                if data_key == "img":
+                    images = [
+                        sample[:, :, i] for i in range(sample.shape[2])
+                    ]  # [1, obs_horizon, M, C, H, W]
+                    image_features = [
+                        self.ema_nets[f"{data_key}_encoder"][i](
+                            image.flatten(end_dim=1)
+                        )
+                        for i, image in enumerate(images)
+                    ]
+                    image_features = torch.stack(image_features, dim=2)
+                    image_features = image_features.reshape(*sample.shape[:2], -1)
+                    features.append(image_features)
+                else:
+                    feat = self.ema_nets[f"{data_key}_encoder"](
+                        sample.flatten(end_dim=1)
+                    )
+                    feat = feat.reshape(*sample.shape[:2], -1)
+                    features.append(feat)
+
+            obs_features = torch.cat(features, dim=-1)
+            obs_cond = obs_features.flatten(start_dim=1)
+            obs_cond = obs_cond.repeat(self.sampling_batch_size, 1)
+
+            # Diffusion-es parameter initialization
+            trunc_step_schedule = np.linspace(5, 1, cem_iters).astype(int)
+            noise_scale = 1.0
+
+            # Initialize elite set
+            noisy_action = torch.randn(
+                (self.sampling_batch_size, self.pred_horizon, self.action_dim), device=self.device
+            )
+
+            naction = noisy_action
+            self.noise_scheduler.set_timesteps(num_diffusion_iters)
+
+            population_trajectories, population_scores, population_info = self.rollout(
+                obs_cond,
+                naction,
+                constraints,
+                initial_rollout=True,
+                deterministic=False,
+            )
+
+            for i in range(cem_iters):
+                n_trunc_steps = trunc_step_schedule[i]
+
+                """
+                Local MPPI update
+                """
+                # Compute reward-probabilities
+                reward_probs = torch.exp(temperature * -population_scores)
+                reward_probs = reward_probs / reward_probs.sum()
+                probs = reward_probs
+
+                """
+                Resample and mutate (renoise-denoise)
+                """
+                if use_cem:
+                    elites = torch.argsort(population_scores)[:num_elites]
+                    indices = torch.randint(0, num_elites, (self.sampling_batch_size,), device=self.device)
+                    population_trajectories = population_trajectories[elites[indices]]
+                    population_trajectories = self.renoise(population_trajectories, n_trunc_steps)
+                else:
+                    indices = torch.multinomial(probs, self.sampling_batch_size,
+                                                replacement=True)  # torch.multinomial(probs, 1).squeeze(1)
+                    population_trajectories = population_trajectories[indices]
+                    population_trajectories = self.renoise(population_trajectories, n_trunc_steps)
+
+                # Denoise
+                population_trajectories, population_scores, population_info = self.rollout(
+                    obs_cond,
+                    population_trajectories,
+                    constraints,
+                    initial_rollout=False,
+                    deterministic=False,
+                    n_trunc_steps=n_trunc_steps,
+                    noise_scale=noise_scale,
+                )
+
+            best_trajectory = population_trajectories[population_scores.argmin()]
+            best_trajectory = best_trajectory.reshape(-1, self.pred_horizon, self.action_dim)
+
+        # unnormalize action
+        best_trajectory = best_trajectory.detach().to("cpu").numpy()
+        best_trajectory = unnormalize_data(best_trajectory, stats=stats["action"])
+
+        # only take action_horizon number of actions
+        start = self.obs_horizon - 1
+        end = start + self.action_horizon
+        action = best_trajectory[start:end, :]
+
+        out = {
+            "trajectory": best_trajectory,
+            "multimodal_trajectories": population_trajectories,
+            "scores": population_scores,
+        }
+
+        return action
+
+    def rollout(
+            self,
+            obs_cond,
+            naction,
+            constraints,
+            initial_rollout=True,
+            deterministic=True,
+            n_trunc_steps=5,
+            noise_scale=1.0,
+            ablate_diffusion=False
+    ):
+        if initial_rollout:
+            timesteps = self.noise_scheduler.timesteps
+        else:
+            timesteps = self.noise_scheduler.timesteps[-n_trunc_steps:]
+
+        if ablate_diffusion and not initial_rollout:
+            timesteps = []
+
+        for k in timesteps:
+            # predict noise
+            noise_pred = self.ema_nets["noise_pred_net"](
+                sample=naction, timestep=k, global_cond=obs_cond
+            )
+
+            if deterministic:
+                eta = 0.0
+            else:
+                prev_alpha = self.noise_scheduler.alphas[k-1]
+                alpha = self.noise_scheduler.alphas[k]
+                eta = noise_scale * torch.sqrt((1 - prev_alpha) / (1 - alpha)) * \
+                        torch.sqrt((1 - alpha) / prev_alpha)
+
+            # inverse diffusion step (remove noise)
+            naction = self.noise_scheduler.step(
+                model_output=noise_pred, timestep=k, sample=naction, eta=eta
+            ).prev_sample
+
+            scores, info = compute_constraint_scores(constraints, naction)
+
+        return naction, scores, info
+
+
+    def renoise(self, population_trajectories, t):
+        noise = torch.randn(population_trajectories.shape, device=self.device)
+        population_trajectories = self.noise_scheduler.add_noise(population_trajectories, noise, self.noise_scheduler.timesteps[-t])
+        return population_trajectories
+
+    def generate_constraints(self):
+        """
+        Each constraint is a function that maps an bimanual trajectory to some scalar cost to be minimized.
+        """
+
+        ## A set of tested NBCFs for bimanual manipulation
+        def left_arm_height_upward(trajectory):
+            """
+            Compute the reward for "raising the left arm slightly" based on joint angles.
+
+            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
+                               Each trajectory consists of 16 timesteps, and each timestep has 14 joint angles
+                               (7 for the left arm, 7 for the right arm).
+            :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
+            """
+            # Extract left arm joint angles from the trajectory
+            # Assuming the left arm's vertical movement is primarily affected by the 3rd joint (index 2)
+            left_arm_joint = trajectory[:, :, 1]  # Shape: (batch, 16)
+
+            # Initialize reward tensor
+            scores = torch.zeros(self.sampling_batch_size, device=trajectory.device)
+
+            # Iterate through each trajectory in the batch
+            for i in range(self.sampling_batch_size):
+                initial_height = left_arm_joint[i, 0]  # First timestep
+                final_height = left_arm_joint[i, -1]  # Last timestep
+
+                # Compute reward as the height increase from the first to the last timestep
+                scores[i] = final_height - initial_height
+
+            return -scores, {}  # Return in (cost, info) format # Negative sign since Diffusion-ES minimizes the cost
+
+
+        return left_arm_height_upward
+
+
+
+def compute_constraint_scores(constraints, trajectory):
+    all_info = {}
+    total_cost = torch.zeros(trajectory.shape[0], device=trajectory.device)
+    for constraint in constraints:
+        cost, info = constraint(trajectory)
+        total_cost += cost
+        all_info.update(info)
+    return total_cost, all_info
+
+
+
+

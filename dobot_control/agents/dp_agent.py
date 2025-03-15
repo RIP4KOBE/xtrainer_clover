@@ -199,7 +199,7 @@ class BimanualDPAgent:
         for i in range(25):  # burn in
             self.act(example_obs)
 
-    def act(self, obs: Dict[str, Any]) -> np.ndarray:
+    def act(self, obs: Dict[str, Any], modulation = False) -> np.ndarray:
         obs = self.dp.get_observation([obs], load_img=True)
         if "img" in obs:
             obs["img"] = self.dp.eval_transform(obs["img"].squeeze(0))
@@ -217,11 +217,19 @@ class BimanualDPAgent:
         # if action queue is empty, predict new actions
         else:
             time1 = time.time()
-            pred = self.dp.predict(
-                self.obsque, num_diffusion_iters=self.num_diffusion_iters
-            )
+
+            if not modulation:
+                pred = self.dp.predict(
+                    self.obsque, num_diffusion_iters=self.num_diffusion_iters
+                )
+            else:
+                pred = self.dp.modulate(
+                    self.obsque, num_diffusion_iters=self.num_diffusion_iters
+                )
+
             time2 = time.time()
             print("DP planning time", time2 - time1)
+
             for i in range(self.dp_args["action_horizon"]):
                 act = pred[i]
                 self.action_queue.append(act)

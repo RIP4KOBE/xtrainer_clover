@@ -9,6 +9,7 @@ import numpy as np
 import tyro
 import threading
 import torch
+import keyboard
 
 from dobot_control.env import RobotEnv
 from dobot_control.robots.robot_node import ZMQClientRobot
@@ -140,7 +141,27 @@ def main(args):
     first = True
 
     print("The robot begins to perform tasks autonomously...")
+    running = True
+    mode = "diffusion"  # running dp trajectory inference
+
     while t < episode_len:
+        # Listen for keyboard input
+        if keyboard.is_pressed("1"):
+            print("Stopping the robot.")
+            running = False  # Stop the robot
+        elif keyboard.is_pressed("2"):
+            print("Modulating trajectory.")
+            mode = "modulate"  # Switch to language modulation mode
+            running = True
+        elif keyboard.is_pressed("3"):
+            print("Resuming task execution.")
+            mode = "diffusion"  # Resume task execution
+            running = True
+
+        if not running:
+            time.sleep(0.1)  # Wait when stopped to avoid high CPU usage
+            continue
+
         # Obtain the current images
         time0 = time.time()
         # with lock:
@@ -161,7 +182,11 @@ def main(args):
             dp_observation['left_wrist_rgb'] = image_left
             dp_observation['right_wrist_rgb'] = image_right
             dp_observation['base_rgb'] = image_top
-            action = dp_model.act(dp_observation)
+
+            if mode == "diffusion":
+                action = dp_model.act(dp_observation)  # Use planned trajectory
+            elif mode == "modulate":
+                action = dp_model.act(dp_observation, modulation=True)  # Use modulated trajectory
 
         else:
             action = act_model.predict(observation,t)
