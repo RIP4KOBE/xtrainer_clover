@@ -557,9 +557,19 @@ class DiffusionPolicy:
             obs_cond = obs_features.flatten(start_dim=1)
             obs_cond = obs_cond.repeat(self.sampling_batch_size, 1)
 
+            # Add Gaussian noise to obs condition to enhance trajectory diversity
+            # obs_noise_level = 0.1
+            # obs_cond = obs_cond + obs_noise_level * torch.randn_like(obs_cond)
+            #
+            # scaling_factor = 0.5
+            # obs_cond = obs_cond * scaling_factor
+
+            # alpha = 0.4 # [0.3, 0.7]
+            # obs_cond = alpha * obs_cond + (1 - alpha) * torch.randn_like(obs_cond)
+
             # Diffusion-es parameter initialization
             trunc_step_schedule = np.linspace(5, 1, cem_iters).astype(int)
-            noise_scale = 1.0
+            noise_scale = 3.0
 
             # Initialize elite set
             noisy_action = torch.randn(
@@ -575,6 +585,7 @@ class DiffusionPolicy:
                 constraints,
                 initial_rollout=True,
                 deterministic=False,
+                noise_scale=noise_scale,
             )
 
             for i in range(cem_iters):
