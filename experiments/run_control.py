@@ -25,8 +25,8 @@ class Args:
     hostname: str = "127.0.0.1"
     show_img: bool = False
     # save_data_path = "/media/zhuoli/5HYSSD/xtrainer/datasets/manidp_experiments/"
-    save_data_path = "/media/zhuoli/5hyDrive/xtrainer/datasets"
-    project_name = "dp_tower_hanging_20250212"
+    save_data_path = "/media/zhuoli/5HYSSD/xtrainer/datasets/"
+    project_name = "assistivedressing"
     agent_name = "dp"
     dp_save_png = False
 
@@ -215,8 +215,10 @@ def check_pose_protection(positions, vel, what_to_do):
     # Define a safe zone
     # left arm (jaw tip position) limit:  290>x>-450  -750<Y<-160  z>44;
     # right arm (jaw tip position) limit:  450>x>-290  -750<Y<-160  z>42;
-    x_range_left = (-450, 290)
-    x_range_right = (-290, 450)
+    # x_range_left = (-450, 290)
+    x_range_left = (-450, 550)
+    # x_range_right = (-290, 450)
+    x_range_right = (-550, 450)
     y_range = (-750, -160)
     z_range_left = 44
     z_range_right = 42
@@ -246,6 +248,7 @@ def check_pose_protection(positions, vel, what_to_do):
         positions_to_check = ['right_left', 'right_right']
         x_ranges = [x_range_right, x_range_right]
         z_ranges = [z_range_right, z_range_right]
+        print(positions_mm)
         if not all(is_within_safe_position(positions_mm[pos], x_range, y_range, z_range)
                    for pos, x_range, z_range in zip(positions_to_check, x_ranges, z_ranges)):
             warnings.append("[Warn]:The right arm is out of the safe zone!")

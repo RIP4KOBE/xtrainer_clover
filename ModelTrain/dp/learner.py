@@ -1,6 +1,7 @@
 import collections
 import copy
 import os
+import time
 
 import numpy as np
 import torch
@@ -558,10 +559,10 @@ class DiffusionPolicy:
             obs_cond = obs_cond.repeat(self.sampling_batch_size, 1)
 
             # Add Gaussian noise to obs condition to enhance trajectory diversity
-            # obs_noise_level = 0.1
-            # obs_cond = obs_cond + obs_noise_level * torch.randn_like(obs_cond)
-            #
-            # scaling_factor = 0.5
+            obs_noise_level = 1
+            obs_cond = obs_cond + obs_noise_level * torch.randn_like(obs_cond)
+
+            # scaling_factor = 0.3
             # obs_cond = obs_cond * scaling_factor
 
             # alpha = 0.4 # [0.3, 0.7]
@@ -569,7 +570,7 @@ class DiffusionPolicy:
 
             # Diffusion-es parameter initialization
             trunc_step_schedule = np.linspace(5, 1, cem_iters).astype(int)
-            noise_scale = 3.0
+            noise_scale = 2.3
 
             # Initialize elite set
             noisy_action = torch.randn(
@@ -588,6 +589,7 @@ class DiffusionPolicy:
                 noise_scale=noise_scale,
             )
 
+            time1 = time.time()
             for i in range(cem_iters):
                 n_trunc_steps = trunc_step_schedule[i]
 
@@ -627,9 +629,13 @@ class DiffusionPolicy:
             best_trajectory = population_trajectories[population_scores.argmin()]
             best_trajectory = best_trajectory.reshape(-1, self.pred_horizon, self.action_dim)
 
+        time2 = time.time()
+        print("Diffusion-ES planning time", time2 - time1)
+        print("population_scores", population_scores)
+        print("best score", population_scores.min())
         # unnormalize action
         best_trajectory = best_trajectory.detach().to("cpu").numpy()
-        best_trajectory = unnormalize_data(best_trajectory, stats=stats["action"])
+        best_trajectory = unnormalize_data(best_trajectory[0], stats=stats["action"])
 
         # only take action_horizon number of actions
         start = self.obs_horizon - 1
@@ -682,7 +688,9 @@ class DiffusionPolicy:
                 model_output=noise_pred, timestep=k, sample=naction, eta=eta
             ).prev_sample
 
-            scores, info = compute_constraint_scores(constraints, naction)
+            # scores, info = compute_constraint_scores(constraints, naction)
+            scores, info = constraints(naction)
+
 
         return naction, scores, info
 
@@ -709,7 +717,7 @@ class DiffusionPolicy:
             """
             # Extract left arm joint angles from the trajectory
             # Assuming the left arm's vertical movement is primarily affected by the 3rd joint (index 2)
-            left_arm_joint = trajectory[:, :, 1]  # Shape: (batch, 16)
+            left_arm_joint = trajectory[:, :, 5]  # Shape: (batch, 16)
 
             # Initialize reward tensor
             scores = torch.zeros(self.sampling_batch_size, device=trajectory.device)
@@ -720,7 +728,9 @@ class DiffusionPolicy:
                 final_height = left_arm_joint[i, -1]  # Last timestep
 
                 # Compute reward as the height increase from the first to the last timestep
-                scores[i] = final_height - initial_height
+                # scores[i] = final_height - initial_height
+                scores[i] = initial_height - final_height
+
 
             return -scores, {}  # Return in (cost, info) format # Negative sign since Diffusion-ES minimizes the cost
 
@@ -729,14 +739,14 @@ class DiffusionPolicy:
 
 
 
-def compute_constraint_scores(constraints, trajectory):
-    all_info = {}
-    total_cost = torch.zeros(trajectory.shape[0], device=trajectory.device)
-    for constraint in constraints:
-        cost, info = constraint(trajectory)
-        total_cost += cost
-        all_info.update(info)
-    return total_cost, all_info
+# def compute_constraint_scores(constraints, trajectory):
+#     all_info = {}
+#     total_cost = torch.zeros(trajectory.shape[0], device=trajectory.device)
+#     for constraint in constraints:
+#         cost, info = constraint(trajectory)
+#         total_cost += cost
+#         all_info.update(info)
+#     return total_cost, all_info
 
 
 

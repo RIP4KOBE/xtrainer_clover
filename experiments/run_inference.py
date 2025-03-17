@@ -9,7 +9,9 @@ import numpy as np
 import tyro
 import threading
 import torch
-import keyboard
+# import keyboard
+from pynput import keyboard
+
 
 from dobot_control.env import RobotEnv
 from dobot_control.robots.robot_node import ZMQClientRobot
@@ -28,9 +30,9 @@ class Args:
     show_img: bool = True
     agent_name: str = "dp"
     act_ckpt_path: str = "./ckpt/act/tidying_up_bowls_abcefg_mix_0925"
-    # dp_ckpt_path: str = "/home/zhuoli/xtrainer_clover/ModelTrain/ckpt/dp/dp_tidying_up_bowls_a_0920_3cam/last.ckpt"
+    dp_ckpt_path: str = "/media/zhuoli/5HYSSD/xtrainer/ModelTrain/dp/model/manidp_experiments/dp_plate_wipping_20250206/last.ckpt"
     # dp_ckpt_path: str = "/media/zhuoli/5HYSSD/xtrainer/ModelTrain/dp/model/manidp_experiments/dp_plug_removal_20250210/last.ckpt"
-    dp_ckpt_path: str = "/media/zhuoli/5HYSSD/xtrainer/ModelTrain/dp/model/manidp_experiments/manidp_tower_hanging_20250212/last.ckpt"
+    # dp_ckpt_path: str = "/media/zhuoli/5HYSSD/xtrainer/ModelTrain/dp/model/manidp_experiments/manidp_tower_hanging_20250212/last.ckpt"
     dp_model = None
     act_model = None
 
@@ -38,6 +40,26 @@ class Args:
 image_left,image_right,image_top,thread_run=None,None,None,None
 lock = threading.Lock()
 
+
+running = True
+mode = "diffusion"
+
+def on_press(key):
+    global running, mode
+    try:
+        if key.char == "1":
+            print("Stopping the robot.")
+            running = False
+        elif key.char == "2":
+            print("Modulating trajectory.")
+            mode = "modulate"
+            running = True
+        elif key.char == "3":
+            print("Resuming task execution.")
+            mode = "diffusion"
+            running = True
+    except AttributeError:
+        pass
 
 def run_thread_cam(rs_cam, which_cam):
     global image_left, image_right, image_top, thread_run
@@ -126,7 +148,7 @@ def main(args):
         act_model.loadModel()
         print("ACT model init success...")
 
-    episode_len = 200  # The total number of steps to complete the task. Note that it must be less than or equal to parameter 'episode_len' of the corresponding task in file 'ModelTrain.constants'
+    episode_len = 700  # The total number of steps to complete the task. Note that it must be less than or equal to parameter 'episode_len' of the corresponding task in file 'ModelTrain.constants'
     t=0
     last_time = 0
 
@@ -140,26 +162,15 @@ def main(args):
 
     first = True
 
-    print("The robot begins to perform tasks autonomously...")
-    running = True
-    mode = "diffusion"  # running dp trajectory inference
+    print("The robot begins to perform the task autonomously...")
+    listener = keyboard.Listener(on_press=on_press)
+    listener.start()
 
     while t < episode_len:
-        # Listen for keyboard input
-        if keyboard.is_pressed("1"):
-            print("Stopping the robot.")
-            running = False  # Stop the robot
-        elif keyboard.is_pressed("2"):
-            print("Modulating trajectory.")
-            mode = "modulate"  # Switch to language modulation mode
-            running = True
-        elif keyboard.is_pressed("3"):
-            print("Resuming task execution.")
-            mode = "diffusion"  # Resume task execution
-            running = True
 
         if not running:
             time.sleep(0.1)  # Wait when stopped to avoid high CPU usage
+            # print("Waiting for the task to resume...")
             continue
 
         # Obtain the current images
@@ -173,7 +184,7 @@ def main(args):
             cv2.imshow("imgs",imgs)
             cv2.waitKey(1)
         time1 = time.time()
-        print("read images time(ms)：",(time1-time0)*1000)
+        # print("read images time(ms)：",(time1-time0)*1000)
 
         # Model inference,output joint value (radian)
         if args.agent_name == "dp":
@@ -201,7 +212,7 @@ def main(args):
         elif action[13]<0:
             action[13]=0
         time2 = time.time()
-        print("Model inference time(ms)：", (time2 - time1) * 1000)
+        # print("Model inference time(ms)：", (time2 - time1) * 1000)
 
         # ×××××××××××××××××××××××××××××Security protection×××××××××××××××××××××××××××××××××××××××××××
         # [Note]: Modify the protection parameters in this section carefully !
@@ -209,7 +220,7 @@ def main(args):
         protect_err = False
 
         delta = action-last_action
-        print("Joint increment：",delta)
+        # print("Joint increment：",delta)
         # if max(delta[0:6])>0.17 or max(delta[7:13])>0.17: # 增量大于10度
         if None: # 增量大于10度
 
@@ -249,7 +260,7 @@ def main(args):
             print(pos)
             protect_err = True
         t2 = time.time()
-        print("get pos time(ms):", (t2 - t1)* 1000)
+        # print("get pos time(ms):", (t2 - t1)* 1000)
 
         if protect_err:
             env.set_do_status([3, 0])  # yellow light off
@@ -278,12 +289,13 @@ def main(args):
         obs["joint_positions"][13] = action[13]
         observation['qpos'] = obs["joint_positions"]
 
-        print("Read joint value time(ms)：", (time4 - time3) * 1000)
+        # print("Read joint value time(ms)：", (time4 - time3) * 1000)
         t +=1
-        print("The total time(ms):", (time4 - time0) * 1000)
+        # print("The total time(ms):", (time4 - time0) * 1000)
 
 
     thread_run = False
+    listener.stop()
     print("Task accomplished")
 
     # Return to the starting position
