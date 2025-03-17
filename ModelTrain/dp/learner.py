@@ -559,8 +559,9 @@ class DiffusionPolicy:
             obs_cond = obs_cond.repeat(self.sampling_batch_size, 1)
 
             # Add Gaussian noise to obs condition to enhance trajectory diversity
-            obs_noise_level = 1
+            obs_noise_level = 1.5
             obs_cond = obs_cond + obs_noise_level * torch.randn_like(obs_cond)
+            # obs_cond = torch.randn_like(obs_cond)
 
             # scaling_factor = 0.3
             # obs_cond = obs_cond * scaling_factor
@@ -717,7 +718,7 @@ class DiffusionPolicy:
             """
             # Extract left arm joint angles from the trajectory
             # Assuming the left arm's vertical movement is primarily affected by the 3rd joint (index 2)
-            left_arm_joint = trajectory[:, :, 5]  # Shape: (batch, 16)
+            left_arm_joint = trajectory[:, :, 1]  # Shape: (batch, 16)
 
             # Initialize reward tensor
             scores = torch.zeros(self.sampling_batch_size, device=trajectory.device)
