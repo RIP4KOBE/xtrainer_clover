@@ -9,10 +9,13 @@ from diffusers.optimization import get_scheduler
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from diffusers.training_utils import EMAModel
+from jsonschema.exceptions import best_match
+
 from ModelTrain.dp.models import *
 from torch.nn.functional import mse_loss
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
+from vis_utils import visualize_trajectory, forward_kinematics
 
 
 def normalize_data(data, stats):
@@ -513,14 +516,14 @@ class DiffusionPolicy:
     def run_diffusion_es(self, stats, obs_deque, num_diffusion_iters=None, constraints=None,
                          use_cem=False, cem_iters=20,
                          num_elites=32,
-                         temperature=0.1,):
+                         temperature=0.1, visualize=False):
         self.ema_nets.eval()
 
         if not num_diffusion_iters:
             num_diffusion_iters = self.num_diffusion_iters
 
         if constraints is None:
-            constraints = self.generate_constraints()
+            constraints = self.generate_constraints(stats)
 
         with torch.no_grad():
             features = []
@@ -627,21 +630,22 @@ class DiffusionPolicy:
                     noise_scale=noise_scale,
                 )
 
-            best_trajectory = population_trajectories[population_scores.argmin()]
-            best_trajectory = best_trajectory.reshape(-1, self.pred_horizon, self.action_dim)
-
         time2 = time.time()
         print("Diffusion-ES planning time", time2 - time1)
         print("population_scores", population_scores)
         print("best score", population_scores.min())
         # unnormalize action
-        best_trajectory = best_trajectory.detach().to("cpu").numpy()
-        best_trajectory = unnormalize_data(best_trajectory[0], stats=stats["action"])
+        population_trajectories = population_trajectories.detach().to("cpu").numpy()
+        population_trajectories = unnormalize_data(population_trajectories, stats["action"])
+        best_trajectory = population_trajectories[population_scores.argmin()]
+
+        if visualize:
+            visualize_trajectory(population_trajectories, best_trajectory)
 
         # only take action_horizon number of actions
         start = self.obs_horizon - 1
         end = start + self.action_horizon
-        action = best_trajectory[start:end, :]
+        action = best_trajectory[0][start:end, :]
 
         out = {
             "trajectory": best_trajectory,
@@ -701,11 +705,10 @@ class DiffusionPolicy:
         population_trajectories = self.noise_scheduler.add_noise(population_trajectories, noise, self.noise_scheduler.timesteps[-t])
         return population_trajectories
 
-    def generate_constraints(self):
+    def generate_constraints(self, stats):
         """
         Each constraint is a function that maps an bimanual trajectory to some scalar cost to be minimized.
         """
-
         ## A set of tested NBCFs for bimanual manipulation
         def left_arm_height_upward(trajectory):
             """
@@ -718,20 +721,21 @@ class DiffusionPolicy:
             """
             # Extract left arm joint angles from the trajectory
             # Assuming the left arm's vertical movement is primarily affected by the 3rd joint (index 2)
-            left_arm_joint = trajectory[:, :, 1]  # Shape: (batch, 16)
+            trajectory = unnormalize_data(trajectory, stats["action"])
+
+            ee_pose = forward_kinematics(trajectory)  # Shape: (batch, 16)
 
             # Initialize reward tensor
             scores = torch.zeros(self.sampling_batch_size, device=trajectory.device)
 
             # Iterate through each trajectory in the batch
             for i in range(self.sampling_batch_size):
-                initial_height = left_arm_joint[i, 0]  # First timestep
-                final_height = left_arm_joint[i, -1]  # Last timestep
+                initial_height = ee_pose[i, 0, 2]  # First timestep
+                final_height = ee_pose[i, -1, 2]  # Last timestep
 
                 # Compute reward as the height increase from the first to the last timestep
-                # scores[i] = final_height - initial_height
-                scores[i] = initial_height - final_height
-
+                scores[i] = final_height - initial_height
+                # scores[i] = initial_height - final_height
 
             return -scores, {}  # Return in (cost, info) format # Negative sign since Diffusion-ES minimizes the cost
 
