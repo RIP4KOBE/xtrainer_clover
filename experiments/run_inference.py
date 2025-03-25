@@ -29,7 +29,8 @@ class Args:
     act_ckpt_path: str = "./ckpt/act/tidying_up_bowls_abcefg_mix_0925"
     # dp_ckpt_path: str = "/home/zhuoli/xtrainer_clover/ModelTrain/ckpt/dp/dp_tidying_up_bowls_a_0920_3cam/last.ckpt"
     # dp_ckpt_path: str = "/media/zhuoli/5HYSSD/xtrainer/ModelTrain/dp/model/manidp_experiments/dp_plug_removal_20250210/last.ckpt"
-    dp_ckpt_path: str = "/media/zhuoli/5HYSSD/xtrainer/ModelTrain/dp/model/manidp_experiments/manidp_tower_hanging_20250212/last.ckpt"
+    # dp_ckpt_path: str = "/media/zhuoli/5HYSSD/xtrainer/ModelTrain/dp/model/manidp_experiments/manidp_tower_hanging_20250212/last.ckpt"
+    dp_ckpt_path: str = "/media/zhuoli/5hyDrive/xtrainer/ModelTrain/dp/model/0322_211925_Buxu-camera=012-identity=False-repr=IP-oh=1-ah=8-ph=16-prefix=None-do=0.0-imgos=32-wd=1e-05-use_ddim=False-binarize_touch=False/last.ckpt"
     dp_model = None
     act_model = None
 
@@ -125,7 +126,7 @@ def main(args):
         act_model.loadModel()
         print("ACT model init success...")
 
-    episode_len = 200  # The total number of steps to complete the task. Note that it must be less than or equal to parameter 'episode_len' of the corresponding task in file 'ModelTrain.constants'
+    episode_len = 1500  # The total number of steps to complete the task. Note that it must be less than or equal to parameter 'episode_len' of the corresponding task in file 'ModelTrain.constants'
     t=0
     last_time = 0
 
@@ -218,8 +219,10 @@ def main(args):
         # right arm (jaw tip position) limit:  410>x>-210  -700<Y<-210  z>47;
         t1 = time.time()
         pos = env.get_XYZrxryrz_state()
-        if not ((pos[0] > -410 and pos[0] < 210 and pos[1] > -700 and pos[1] < -210 and pos[2] > 42) and \
-                (pos[6] < 410 and pos[6] > -210 and pos[7] > -700 and pos[7] < -210 and pos[8] > 42)):
+        # if not ((pos[0] > -410 and pos[0] < 210 and pos[1] > -700 and pos[1] < -210 and pos[2] > 42) and \
+        #         (pos[6] < 410 and pos[6] > -210 and pos[7] > -700 and pos[7] < -210 and pos[8] > 42)):
+        if not ((pos[0] > -500 and pos[0] < 700 and pos[1] > -700 and pos[1] < -210 and pos[2] > 42) and \
+                (pos[6] < 500 and pos[6] > -700 and pos[7] > -700 and pos[7] < -210 and pos[8] > 42)):
             print("[Warn]:The robot arm XYZ is out of the safe position! ")
             print(pos)
             protect_err = True

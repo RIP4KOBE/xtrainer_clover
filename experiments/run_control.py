@@ -25,8 +25,8 @@ class Args:
     hostname: str = "127.0.0.1"
     show_img: bool = False
     # save_data_path = "/media/zhuoli/5HYSSD/xtrainer/datasets/manidp_experiments/"
-    save_data_path = "/media/zhuoli/5hyDrive/xtrainer/datasets"
-    project_name = "dp_tower_hanging_20250212"
+    save_data_path = "/media/zhuoli/5HYSSD/xtrainer/datasets/"
+    project_name = "assistivedressing_2025_03_21_labjacket"
     agent_name = "dp"
     dp_save_png = False
 
@@ -215,8 +215,10 @@ def check_pose_protection(positions, vel, what_to_do):
     # Define a safe zone
     # left arm (jaw tip position) limit:  290>x>-450  -750<Y<-160  z>44;
     # right arm (jaw tip position) limit:  450>x>-290  -750<Y<-160  z>42;
-    x_range_left = (-450, 290)
-    x_range_right = (-290, 450)
+    # x_range_left = (-450, 290)
+    x_range_left = (-500, 700)
+    # x_range_right = (-290, 450)
+    x_range_right = (-700, 500)
     y_range = (-750, -160)
     z_range_left = 44
     z_range_right = 42
