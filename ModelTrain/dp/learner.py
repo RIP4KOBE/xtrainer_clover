@@ -562,8 +562,8 @@ class DiffusionPolicy:
             obs_cond = obs_cond.repeat(self.sampling_batch_size, 1)
 
             # Add Gaussian noise to obs condition to enhance trajectory diversity
-            obs_noise_level = 1.5
-            obs_cond = obs_cond + obs_noise_level * torch.randn_like(obs_cond)
+            # obs_noise_level = 0.5
+            # obs_cond = obs_cond + obs_noise_level * torch.randn_like(obs_cond)
             # obs_cond = torch.randn_like(obs_cond)
 
             # scaling_factor = 0.3
@@ -574,7 +574,7 @@ class DiffusionPolicy:
 
             # Diffusion-es parameter initialization
             trunc_step_schedule = np.linspace(5, 1, cem_iters).astype(int)
-            noise_scale = 2.3
+            noise_scale = 1.0
 
             # Initialize elite set
             noisy_action = torch.randn(
@@ -637,7 +637,9 @@ class DiffusionPolicy:
         # unnormalize action
         population_trajectories = population_trajectories.detach().to("cpu").numpy()
         population_trajectories = unnormalize_data(population_trajectories, stats["action"])
+        print("population_trajectories shape", population_trajectories.shape)
         best_trajectory = population_trajectories[population_scores.argmin()]
+        print("best_trajectory", best_trajectory, "shape", best_trajectory.shape)
 
         if visualize:
             visualize_trajectory(population_trajectories, best_trajectory)
@@ -645,7 +647,7 @@ class DiffusionPolicy:
         # only take action_horizon number of actions
         start = self.obs_horizon - 1
         end = start + self.action_horizon
-        action = best_trajectory[0][start:end, :]
+        action = best_trajectory[start:end, :]
 
         out = {
             "trajectory": best_trajectory,
@@ -719,26 +721,26 @@ class DiffusionPolicy:
                                (7 for the left arm, 7 for the right arm).
             :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
             """
-            # Extract left arm joint angles from the trajectory
-            # Assuming the left arm's vertical movement is primarily affected by the 3rd joint (index 2)
+            # Convert trajectory to numpy and unnormalize
+            device = trajectory.device
+            trajectory = trajectory.detach().cpu().numpy()
+            trajectory = trajectory.reshape(-1, 16, 14)
             trajectory = unnormalize_data(trajectory, stats["action"])
 
-            ee_pose = forward_kinematics(trajectory)  # Shape: (batch, 16)
+            # Extract predicted left arm ee positions
+            ee_position, _ = forward_kinematics(trajectory)  # Shape: (batch, 16)
+            scores = np.zeros(self.sampling_batch_size)
 
-            # Initialize reward tensor
-            scores = torch.zeros(self.sampling_batch_size, device=trajectory.device)
-
-            # Iterate through each trajectory in the batch
+            # Iterate scoring each trajectory in the batch
             for i in range(self.sampling_batch_size):
-                initial_height = ee_pose[i, 0, 2]  # First timestep
-                final_height = ee_pose[i, -1, 2]  # Last timestep
+                initial_height = ee_position[i, 0, 2]  # First timestep
+                final_height = ee_position[i, -1, 2]  # Last timestep
 
                 # Compute reward as the height increase from the first to the last timestep
-                scores[i] = final_height - initial_height
-                # scores[i] = initial_height - final_height
-
-            return -scores, {}  # Return in (cost, info) format # Negative sign since Diffusion-ES minimizes the cost
-
+                # scores[i] = final_height - initial_height
+                scores[i] = initial_height - final_height
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
 
         return left_arm_height_upward
 

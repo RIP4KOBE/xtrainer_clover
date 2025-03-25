@@ -30,7 +30,7 @@ class Args:
     show_img: bool = True
     agent_name: str = "dp"
     act_ckpt_path: str = "./ckpt/act/tidying_up_bowls_abcefg_mix_0925"
-    dp_ckpt_path: str = "/media/zhuoli/5HYSSD/xtrainer/ModelTrain/dp/model/manidp_experiments/dp_plate_wipping_20250206/last.ckpt"
+    dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/manidp_plate_wipping_b_20250207/last.ckpt"
     # dp_ckpt_path: str = "/media/zhuoli/5HYSSD/xtrainer/ModelTrain/dp/model/manidp_experiments/dp_plug_removal_20250210/last.ckpt"
     # dp_ckpt_path: str = "/media/zhuoli/5HYSSD/xtrainer/ModelTrain/dp/model/manidp_experiments/manidp_tower_hanging_20250212/last.ckpt"
     dp_model = None
