@@ -562,19 +562,19 @@ class DiffusionPolicy:
             obs_cond = obs_cond.repeat(self.sampling_batch_size, 1)
 
             # Add Gaussian noise to obs condition to enhance trajectory diversity
-            # obs_noise_level = 0.5
+            # obs_noise_level = 1.0
             # obs_cond = obs_cond + obs_noise_level * torch.randn_like(obs_cond)
             # obs_cond = torch.randn_like(obs_cond)
 
-            # scaling_factor = 0.3
-            # obs_cond = obs_cond * scaling_factor
+            scaling_factor = 0.25
+            obs_cond = obs_cond * scaling_factor
 
-            # alpha = 0.4 # [0.3, 0.7]
+            # alpha = 0.25 # [0.3, 0.7]
             # obs_cond = alpha * obs_cond + (1 - alpha) * torch.randn_like(obs_cond)
 
             # Diffusion-es parameter initialization
             trunc_step_schedule = np.linspace(5, 1, cem_iters).astype(int)
-            noise_scale = 1.0
+            noise_scale = 2.3
 
             # Initialize elite set
             noisy_action = torch.randn(
@@ -726,9 +726,10 @@ class DiffusionPolicy:
             trajectory = trajectory.detach().cpu().numpy()
             trajectory = trajectory.reshape(-1, 16, 14)
             trajectory = unnormalize_data(trajectory, stats["action"])
+            left_trajectory = trajectory[:, :, :6]
 
             # Extract predicted left arm ee positions
-            ee_position, _ = forward_kinematics(trajectory)  # Shape: (batch, 16)
+            ee_position, _ = forward_kinematics(left_trajectory)  # Shape: (batch, 16)
             scores = np.zeros(self.sampling_batch_size)
 
             # Iterate scoring each trajectory in the batch
@@ -737,8 +738,8 @@ class DiffusionPolicy:
                 final_height = ee_position[i, -1, 2]  # Last timestep
 
                 # Compute reward as the height increase from the first to the last timestep
-                # scores[i] = final_height - initial_height
-                scores[i] = initial_height - final_height
+                scores[i] = final_height - initial_height
+                # scores[i] = initial_height - final_height
             scores = -torch.as_tensor(scores, device=device)
             return scores, {}
 
