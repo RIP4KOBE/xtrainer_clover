@@ -566,11 +566,11 @@ class DiffusionPolicy:
             # obs_cond = obs_cond + obs_noise_level * torch.randn_like(obs_cond)
             # obs_cond = torch.randn_like(obs_cond)
 
-            scaling_factor = 0.25
-            obs_cond = obs_cond * scaling_factor
+            # scaling_factor = 0.25
+            # obs_cond = obs_cond * scaling_factor
 
-            # alpha = 0.25 # [0.3, 0.7]
-            # obs_cond = alpha * obs_cond + (1 - alpha) * torch.randn_like(obs_cond)
+            alpha = 0.25 # [0.3, 0.7]
+            obs_cond = alpha * obs_cond + (1 - alpha) * torch.randn_like(obs_cond)
 
             # Diffusion-es parameter initialization
             trunc_step_schedule = np.linspace(5, 1, cem_iters).astype(int)
