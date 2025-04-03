@@ -30,7 +30,7 @@ class Args:
     # dp_ckpt_path: str = "/home/zhuoli/xtrainer_clover/ModelTrain/ckpt/dp/dp_tidying_up_bowls_a_0920_3cam/last.ckpt"
     # dp_ckpt_path: str = "/media/zhuoli/5HYSSD/xtrainer/ModelTrain/dp/model/manidp_experiments/dp_plug_removal_20250210/last.ckpt"
     # dp_ckpt_path: str = "/media/zhuoli/5HYSSD/xtrainer/ModelTrain/dp/model/manidp_experiments/manidp_tower_hanging_20250212/last.ckpt"
-    dp_ckpt_path: str = "/media/zhuoli/5hyDrive/xtrainer/ModelTrain/dp/model/0322_211925_Buxu-camera=012-identity=False-repr=IP-oh=1-ah=8-ph=16-prefix=None-do=0.0-imgos=32-wd=1e-05-use_ddim=False-binarize_touch=False/last.ckpt"
+    dp_ckpt_path: str = "/media/zhuoli/5HYSSD/xtrainer/ModelTrain/dp/model/AssistiveDressingLabJacket/0331_181449_iBOT-camera=012-identity=False-repr=IP-oh=1-ah=8-ph=16-prefix=None-do=0.0-imgos=32-wd=1e-05-use_ddim=False-binarize_touch=False/last.ckpt"
     dp_model = None
     act_model = None
 
