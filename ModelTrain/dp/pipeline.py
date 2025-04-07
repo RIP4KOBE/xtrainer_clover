@@ -21,7 +21,7 @@ from ModelTrain.dp.models import GaussianNoise, ImageEncoder, StateEncoder
 from torch import nn
 from torch.nn import ModuleList
 from torchvision import transforms
-from dp.utils import WandBLogger, generate_random_string, get_eef_delta, save_args
+from ModelTrain.dp.utils import WandBLogger, generate_random_string, get_eef_delta, save_args
 
 LEFT_XTRAINER_IDX = list(range(0, 6))
 RIGHT_XTRAINER_IDX = list(range(12, 18))
@@ -505,7 +505,6 @@ class Agent:
 
             # images - (N, num_cams, self.image_channel, 240, 320)
             obs = self.get_observation(data, self.load_img or cache_memmap)
-            print("test1")
 
             # obs space
             for rt in self.representation_type:
@@ -621,7 +620,18 @@ class Agent:
                 train_loader.dataset.__getitem__
             )
 
-        self.policy.train(
+        # self.policy.train(
+        #     epochs,
+        #     train_loader,
+        #     save_path=save_path,
+        #     eval_data=eval_data,
+        #     eval_freq=eval_freq,
+        #     save_freq=save_freq,
+        #     wandb_logger=wandb_logger,
+        # )
+
+        # DP training with classifier-free guidance
+        self.policy.train_cfg(
             epochs,
             train_loader,
             save_path=save_path,
@@ -786,15 +796,16 @@ if __name__ == "__main__":
     args.add_argument("--base_path", type=str, default="/shared")
     args.add_argument("--data_name", type=str, default="test_data")
     args.add_argument("--data_path", type=str,
-                      default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data/collect_data")
+                      default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data/manidp_plate_wiping/collect_data")
     args.add_argument("--data_prefix", type=str, default=None)
-    args.add_argument("--model_save_path", type=str, default="/home/zhuoli/dobot_xtrainer/model")
+    args.add_argument("--model_save_path", type=str,
+                      default="/home/zhuoli/dobot_xtrainer/model/dp_cfg_plate_wipping_20250402")
 
     args.add_argument("--clip_far", type=boolean_string, default=False)
     args.add_argument("--color_jitter", type=boolean_string, default=False)
     args.add_argument("--predict_eef_delta", type=boolean_string, default=False)
     args.add_argument("--predict_pos_delta", type=boolean_string, default=False)
-    args.add_argument("--use_ddim", type=boolean_string, default=False)
+    args.add_argument("--use_ddim", type=boolean_string, default=True)
 
     args.add_argument("--policy_dropout_rate", type=float, default=0.0)  # For simple BC
     args.add_argument(
@@ -816,7 +827,7 @@ if __name__ == "__main__":
     args.add_argument("--gpu", type=int, default=0)
 
     args.add_argument("--camera_indices", type=str, default="012")
-    args.add_argument("--save_freq", type=int, default=10)
+    args.add_argument("--save_freq", type=int, default=100)
     args.add_argument("--eval_freq", type=int, default=10)
 
     args.add_argument("--add_model_save_path_suffix", type=boolean_string, default=True)

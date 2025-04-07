@@ -333,6 +333,214 @@ class DiffusionPolicy:
                     print(f"Action_MSE: {mse}, Normalized_MSE: {normalized_mse}")
                     self.ema_nets.train()
 
+
+    def train_cfg(
+        self,
+        num_epochs,
+        dataloader,
+        eval_data=None,
+        save_path=None,
+        save_freq=10,
+        eval_freq=10,
+        wandb_logger=None,
+        eval=False,
+        conditional_pdrop=0.1,
+    ):
+        if eval:
+            nets = self.ema_nets
+            nets.eval()
+            action_mse = []
+        else:
+            nets = self.nets
+            nets.train()
+
+        if self.writer is None and save_path is not None:
+            # get the name from save_path
+            name = os.path.basename(save_path)
+            self.writer = SummaryWriter(os.path.join("./runs", name))
+        with tqdm(range(num_epochs), desc="Epoch") as tglobal:
+            # epoch loop
+            for epoch_idx in tglobal:
+                # batch loop
+                epoch_loss = list()
+                with tqdm(dataloader, desc="Batch", leave=False) as tepoch:
+                    for nbatch in tepoch:
+                        # data normalized in dataset
+                        # device transfer
+                        naction = nbatch["action"].to(self.device)
+                        B = naction.shape[0]
+                        features = []
+
+                        ### IMPT: make sure input is always in this order
+                        # eef, hand_pos, img, pos, touch
+                        for data_key in [
+                            dk
+                            for dk in ["eef", "hand_pos", "img", "pos", "touch"]
+                            if dk in self.representation_type
+                        ]:
+                            nsample = nbatch[data_key][:, : self.obs_horizon].to(
+                                self.device
+                            )
+                            if data_key == "img":
+                                images = [
+                                    nsample[:, :, i] for i in range(nsample.shape[2])
+                                ]  # [B, obs_horizon, M, C, H, W]
+                                image_features = [
+                                    nets[f"{data_key}_encoder"][i](
+                                        image.flatten(end_dim=1)
+                                    )
+                                    for i, image in enumerate(images)
+                                ]
+                                image_features = torch.stack(image_features, dim=2)
+                                image_features = image_features.reshape(
+                                    *nsample.shape[:2], -1
+                                )
+                                features.append(image_features)
+                            else:
+                                nfeat = nets[f"{data_key}_encoder"](
+                                    nsample.flatten(end_dim=1)
+                                )
+                                nfeat = nfeat.reshape(*nsample.shape[:2], -1)
+                                features.append(nfeat)
+
+                        obs_features = torch.cat(features, dim=-1)
+                        # (B, obs_horizon * obs_dim)
+                        obs_cond = obs_features.flatten(start_dim=1)
+
+                        if self.without_sampling:
+                            action = nets["bc_actor"](obs_cond)
+                            action = action.reshape(
+                                -1, self.pred_horizon, self.action_dim
+                            )
+                            # L2 loss
+                            loss = nn.functional.mse_loss(action, naction)
+                        else:
+                            # sample noise to add to actions
+                            noise = torch.randn(naction.shape, device=self.device)
+
+                            # Training
+                            if not eval:
+                                # sample a diffusion iteration for each data point
+                                timesteps = torch.randint(
+                                    0,
+                                    self.noise_scheduler.config.num_train_timesteps,
+                                    (B,),
+                                    device=self.device,
+                                ).long()
+
+                                # add noise to the clean images according to the noise magnitude at each diffusion iteration
+                                # (this is the forward diffusion process)
+                                noisy_actions = self.noise_scheduler.add_noise(
+                                    naction, noise, timesteps
+                                )
+
+                                # random dropout for classifier-free guidance
+                                if torch.rand(1) < conditional_pdrop:
+                                    obs_cond.zero_()
+
+                                # predict the noise residual
+                                noise_pred = nets["noise_pred_net"](
+                                    noisy_actions, timesteps, global_cond=obs_cond
+                                )
+
+                                # L2 loss
+                                loss = nn.functional.mse_loss(noise_pred, noise)
+
+                            # Evaluation
+                            else:
+                                noisy_action = noise
+                                pred_action = noisy_action
+
+                                self.noise_scheduler.set_timesteps(
+                                    self.num_diffusion_iters
+                                )
+
+                                for k in self.noise_scheduler.timesteps:
+                                    # predict noise
+                                    noise_pred = nets["noise_pred_net"](
+                                        sample=pred_action,
+                                        timestep=k,
+                                        global_cond=obs_cond,
+                                    )
+
+                                    # inverse diffusion step (remove noise)
+                                    pred_action = self.noise_scheduler.step(
+                                        model_output=noise_pred,
+                                        timestep=k,
+                                        sample=pred_action,
+                                    ).prev_sample
+
+                                loss = nn.functional.mse_loss(naction, pred_action)
+
+                                unnormalized_naction = unnormalize_data(
+                                    naction.detach().cpu().numpy(),
+                                    self.data_stat["action"],
+                                )
+                                unnormalized_pred_action = unnormalize_data(
+                                    pred_action.detach().cpu().numpy(),
+                                    self.data_stat["action"],
+                                )
+                                unnormalized_loss = nn.functional.mse_loss(
+                                    torch.tensor(unnormalized_naction),
+                                    torch.tensor(unnormalized_pred_action),
+                                )
+
+                        if not eval:
+                            # optimize
+                            loss.backward()
+                            self.optimizer.step()
+                            self.optimizer.zero_grad()
+                            # step lr scheduler every batch
+                            # this is different from standard pytorch behavior
+                            self.lr_scheduler.step()
+
+                            # update Exponential Moving Average of the model weights
+                            self.ema.step(nets.parameters())
+                        else:
+                            action_mse.append(unnormalized_loss.item())
+
+                        loss_cpu = loss.item()
+                        epoch_loss.append(loss_cpu)
+                        tepoch.set_postfix(loss=loss_cpu)
+                tglobal.set_postfix(loss=np.mean(epoch_loss))
+                if self.writer is not None:
+                    self.writer.add_scalar("Loss", np.mean(epoch_loss), epoch_idx)
+
+                if eval:
+                    return np.mean(epoch_loss), np.mean(action_mse)
+
+                if wandb_logger is not None:
+                    wandb_logger.step()
+                    wandb_logger.log({"Loss": np.mean(epoch_loss), "epoch": epoch_idx})
+                if (
+                    save_path is not None
+                    and epoch_idx % save_freq == 0
+                    and epoch_idx != 0
+                ):
+                    model_path = os.path.join(
+                        save_path, f"model_epoch_{epoch_idx}.ckpt"
+                    )
+                    self.save(model_path)
+
+                # save last checkpoint
+                model_path = os.path.join(save_path, f"last.ckpt")
+                self.save(model_path)
+
+                if eval_data is not None and epoch_idx % eval_freq == 0:
+                    self.to_ema()
+                    self.ema_nets.eval()
+                    print("Evaluating one trajectory...")
+                    obs, action = eval_data
+                    _, mse, normalized_mse = self.eval(obs, action)
+                    self.writer.add_scalar("Action_MSE", mse, epoch_idx)
+                    self.writer.add_scalar("Normalized_MSE", normalized_mse, epoch_idx)
+
+                    if wandb_logger is not None:
+                        wandb_logger.log({"Action_MSE": mse})
+                        wandb_logger.log({"Normalized_MSE": normalized_mse})
+                    print(f"Action_MSE: {mse}, Normalized_MSE: {normalized_mse}")
+                    self.ema_nets.train()
+
     def eval(self, obs, action):
         obs_deque = collections.deque(
             [obs[0]] * self.obs_horizon, maxlen=self.obs_horizon
@@ -569,8 +777,8 @@ class DiffusionPolicy:
             # scaling_factor = 0.25
             # obs_cond = obs_cond * scaling_factor
 
-            alpha = 0.25 # [0.3, 0.7]
-            obs_cond = alpha * obs_cond + (1 - alpha) * torch.randn_like(obs_cond)
+            # alpha = 0.25 # [0.3, 0.7]
+            # obs_cond = alpha * obs_cond + (1 - alpha) * torch.randn_like(obs_cond)
 
             # Diffusion-es parameter initialization
             trunc_step_schedule = np.linspace(5, 1, cem_iters).astype(int)
@@ -666,7 +874,8 @@ class DiffusionPolicy:
             deterministic=True,
             n_trunc_steps=5,
             noise_scale=1.0,
-            ablate_diffusion=False
+            ablate_diffusion=False,
+            gamma = 0.5
     ):
         if initial_rollout:
             timesteps = self.noise_scheduler.timesteps
@@ -677,10 +886,15 @@ class DiffusionPolicy:
             timesteps = []
 
         for k in timesteps:
-            # predict noise
+
+            # predict noise with classifier-free guidance
             noise_pred = self.ema_nets["noise_pred_net"](
                 sample=naction, timestep=k, global_cond=obs_cond
             )
+            uncond_noise_pred = self.ema_nets["noise_pred_net"](
+                sample=naction, timestep=k, global_cond=obs_cond.zero_()
+            )
+            noise_pred = (1 + gamma) * noise_pred - gamma * uncond_noise_pred
 
             if deterministic:
                 eta = 0.0
@@ -697,7 +911,6 @@ class DiffusionPolicy:
 
             # scores, info = compute_constraint_scores(constraints, naction)
             scores, info = constraints(naction)
-
 
         return naction, scores, info
 
