@@ -431,7 +431,7 @@ class Agent:
             data['pos']: torch.tensor (1,24)
         """
         pred = self.policy.run_diffusion_es(
-            self.stats, obs_deque, num_diffusion_iters=num_diffusion_iters, visualize=False
+            self.stats, obs_deque, num_diffusion_iters=num_diffusion_iters, visualize=True
         )
         return pred
 

@@ -407,83 +407,75 @@ class DiffusionPolicy:
                         # (B, obs_horizon * obs_dim)
                         obs_cond = obs_features.flatten(start_dim=1)
 
-                        if self.without_sampling:
-                            action = nets["bc_actor"](obs_cond)
-                            action = action.reshape(
-                                -1, self.pred_horizon, self.action_dim
+                        # sample noise to add to actions
+                        noise = torch.randn(naction.shape, device=self.device)
+
+                        # Training
+                        if not eval:
+                            # sample a diffusion iteration for each data point
+                            timesteps = torch.randint(
+                                0,
+                                self.noise_scheduler.config.num_train_timesteps,
+                                (B,),
+                                device=self.device,
+                            ).long()
+
+                            # add noise to the clean images according to the noise magnitude at each diffusion iteration
+                            # (this is the forward diffusion process)
+                            noisy_actions = self.noise_scheduler.add_noise(
+                                naction, noise, timesteps
                             )
+
+                            # random dropout for classifier-free guidance
+                            if torch.rand(1) < conditional_pdrop:
+                                obs_cond.zero_()
+
+                            # predict the noise residual
+                            noise_pred = nets["noise_pred_net"](
+                                noisy_actions, timesteps, global_cond=obs_cond
+                            )
+
                             # L2 loss
-                            loss = nn.functional.mse_loss(action, naction)
+                            loss = nn.functional.mse_loss(noise_pred, noise)
+
+                        # Evaluation
                         else:
-                            # sample noise to add to actions
-                            noise = torch.randn(naction.shape, device=self.device)
+                            noisy_action = noise
+                            pred_action = noisy_action
 
-                            # Training
-                            if not eval:
-                                # sample a diffusion iteration for each data point
-                                timesteps = torch.randint(
-                                    0,
-                                    self.noise_scheduler.config.num_train_timesteps,
-                                    (B,),
-                                    device=self.device,
-                                ).long()
+                            self.noise_scheduler.set_timesteps(
+                                self.num_diffusion_iters
+                            )
 
-                                # add noise to the clean images according to the noise magnitude at each diffusion iteration
-                                # (this is the forward diffusion process)
-                                noisy_actions = self.noise_scheduler.add_noise(
-                                    naction, noise, timesteps
-                                )
-
-                                # random dropout for classifier-free guidance
-                                if torch.rand(1) < conditional_pdrop:
-                                    obs_cond.zero_()
-
-                                # predict the noise residual
+                            for k in self.noise_scheduler.timesteps:
+                                # predict noise
                                 noise_pred = nets["noise_pred_net"](
-                                    noisy_actions, timesteps, global_cond=obs_cond
+                                    sample=pred_action,
+                                    timestep=k,
+                                    global_cond=obs_cond,
                                 )
 
-                                # L2 loss
-                                loss = nn.functional.mse_loss(noise_pred, noise)
+                                # inverse diffusion step (remove noise)
+                                pred_action = self.noise_scheduler.step(
+                                    model_output=noise_pred,
+                                    timestep=k,
+                                    sample=pred_action,
+                                ).prev_sample
 
-                            # Evaluation
-                            else:
-                                noisy_action = noise
-                                pred_action = noisy_action
+                            loss = nn.functional.mse_loss(naction, pred_action)
 
-                                self.noise_scheduler.set_timesteps(
-                                    self.num_diffusion_iters
-                                )
-
-                                for k in self.noise_scheduler.timesteps:
-                                    # predict noise
-                                    noise_pred = nets["noise_pred_net"](
-                                        sample=pred_action,
-                                        timestep=k,
-                                        global_cond=obs_cond,
-                                    )
-
-                                    # inverse diffusion step (remove noise)
-                                    pred_action = self.noise_scheduler.step(
-                                        model_output=noise_pred,
-                                        timestep=k,
-                                        sample=pred_action,
-                                    ).prev_sample
-
-                                loss = nn.functional.mse_loss(naction, pred_action)
-
-                                unnormalized_naction = unnormalize_data(
-                                    naction.detach().cpu().numpy(),
-                                    self.data_stat["action"],
-                                )
-                                unnormalized_pred_action = unnormalize_data(
-                                    pred_action.detach().cpu().numpy(),
-                                    self.data_stat["action"],
-                                )
-                                unnormalized_loss = nn.functional.mse_loss(
-                                    torch.tensor(unnormalized_naction),
-                                    torch.tensor(unnormalized_pred_action),
-                                )
+                            unnormalized_naction = unnormalize_data(
+                                naction.detach().cpu().numpy(),
+                                self.data_stat["action"],
+                            )
+                            unnormalized_pred_action = unnormalize_data(
+                                pred_action.detach().cpu().numpy(),
+                                self.data_stat["action"],
+                            )
+                            unnormalized_loss = nn.functional.mse_loss(
+                                torch.tensor(unnormalized_naction),
+                                torch.tensor(unnormalized_pred_action),
+                            )
 
                         if not eval:
                             # optimize
@@ -782,7 +774,7 @@ class DiffusionPolicy:
 
             # Diffusion-es parameter initialization
             trunc_step_schedule = np.linspace(5, 1, cem_iters).astype(int)
-            noise_scale = 2.3
+            noise_scale = 1.0
 
             # Initialize elite set
             noisy_action = torch.randn(
@@ -802,41 +794,41 @@ class DiffusionPolicy:
             )
 
             time1 = time.time()
-            for i in range(cem_iters):
-                n_trunc_steps = trunc_step_schedule[i]
-
-                """
-                Local MPPI update
-                """
-                # Compute reward-probabilities
-                reward_probs = torch.exp(temperature * -population_scores)
-                reward_probs = reward_probs / reward_probs.sum()
-                probs = reward_probs
-
-                """
-                Resample and mutate (renoise-denoise)
-                """
-                if use_cem:
-                    elites = torch.argsort(population_scores)[:num_elites]
-                    indices = torch.randint(0, num_elites, (self.sampling_batch_size,), device=self.device)
-                    population_trajectories = population_trajectories[elites[indices]]
-                    population_trajectories = self.renoise(population_trajectories, n_trunc_steps)
-                else:
-                    indices = torch.multinomial(probs, self.sampling_batch_size,
-                                                replacement=True)  # torch.multinomial(probs, 1).squeeze(1)
-                    population_trajectories = population_trajectories[indices]
-                    population_trajectories = self.renoise(population_trajectories, n_trunc_steps)
-
-                # Denoise
-                population_trajectories, population_scores, population_info = self.rollout(
-                    obs_cond,
-                    population_trajectories,
-                    constraints,
-                    initial_rollout=False,
-                    deterministic=False,
-                    n_trunc_steps=n_trunc_steps,
-                    noise_scale=noise_scale,
-                )
+            # for i in range(cem_iters):
+            #     n_trunc_steps = trunc_step_schedule[i]
+            #
+            #     """
+            #     Local MPPI update
+            #     """
+            #     # Compute reward-probabilities
+            #     reward_probs = torch.exp(temperature * -population_scores)
+            #     reward_probs = reward_probs / reward_probs.sum()
+            #     probs = reward_probs
+            #
+            #     """
+            #     Resample and mutate (renoise-denoise)
+            #     """
+            #     if use_cem:
+            #         elites = torch.argsort(population_scores)[:num_elites]
+            #         indices = torch.randint(0, num_elites, (self.sampling_batch_size,), device=self.device)
+            #         population_trajectories = population_trajectories[elites[indices]]
+            #         population_trajectories = self.renoise(population_trajectories, n_trunc_steps)
+            #     else:
+            #         indices = torch.multinomial(probs, self.sampling_batch_size,
+            #                                     replacement=True)  # torch.multinomial(probs, 1).squeeze(1)
+            #         population_trajectories = population_trajectories[indices]
+            #         population_trajectories = self.renoise(population_trajectories, n_trunc_steps)
+            #
+            #     # Denoise
+            #     population_trajectories, population_scores, population_info = self.rollout(
+            #         obs_cond,
+            #         population_trajectories,
+            #         constraints,
+            #         initial_rollout=False,
+            #         deterministic=False,
+            #         n_trunc_steps=n_trunc_steps,
+            #         noise_scale=noise_scale,
+            #     )
 
         time2 = time.time()
         print("Diffusion-ES planning time", time2 - time1)
@@ -844,6 +836,11 @@ class DiffusionPolicy:
         print("best score", population_scores.min())
         # unnormalize action
         population_trajectories = population_trajectories.detach().to("cpu").numpy()
+        # unnormalize action of population_trajectories in for loop
+        # for i in range(population_trajectories.shape[0]):
+        #     population_trajectories[i] = unnormalize_data(
+        #         population_trajectories[i], stats["action"]
+        #     )
         population_trajectories = unnormalize_data(population_trajectories, stats["action"])
         print("population_trajectories shape", population_trajectories.shape)
         best_trajectory = population_trajectories[population_scores.argmin()]
@@ -892,9 +889,11 @@ class DiffusionPolicy:
                 sample=naction, timestep=k, global_cond=obs_cond
             )
             uncond_noise_pred = self.ema_nets["noise_pred_net"](
-                sample=naction, timestep=k, global_cond=obs_cond.zero_()
+                sample=naction, timestep=k, global_cond=torch.zeros(obs_cond.shape, device=self.device)
             )
             noise_pred = (1 + gamma) * noise_pred - gamma * uncond_noise_pred
+            # noise_pred = uncond_noise_pred
+            # noise_pred = noise_pred
 
             if deterministic:
                 eta = 0.0
