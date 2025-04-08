@@ -942,9 +942,8 @@ class DiffusionPolicy:
             uncond_noise_pred = self.ema_nets["noise_pred_net"](
                 sample=naction, timestep=k, global_cond=torch.zeros(obs_cond.shape, device=self.device)
             )
-            noise_pred = (1 + gamma) * noise_pred - gamma * uncond_noise_pred
+            # noise_pred = (1 + gamma) * noise_pred - gamma * uncond_noise_pred
             # noise_pred = uncond_noise_pred
-            # noise_pred = noise_pred
 
             if deterministic:
                 eta = 0.0
