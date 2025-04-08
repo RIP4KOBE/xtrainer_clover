@@ -2,6 +2,7 @@ import collections
 import copy
 import os
 import time
+import yaml
 
 import numpy as np
 import torch
@@ -345,7 +346,22 @@ class DiffusionPolicy:
         wandb_logger=None,
         eval=False,
         conditional_pdrop=0.1,
+        cfg_options=None,
     ):
+        if cfg_options is None:
+            cfg_dict = dict()
+        else:
+            with open(cfg_options, 'r') as f:
+                cfg_dict = yaml.safe_load(f)
+
+        use_large_drop_prob = cfg_dict.get("use_large_drop_prob", False)
+        use_batch_split = cfg_dict.get("use_batch_split", False)
+        use_mixed_loss = cfg_dict.get("use_mixed_loss", False)
+        use_two_stage = cfg_dict.get("use_two_stage", False)
+
+        print(f"cfg_dict: {cfg_dict}")
+
+
         if eval:
             nets = self.ema_nets
             nets.eval()
@@ -426,17 +442,52 @@ class DiffusionPolicy:
                                 naction, noise, timesteps
                             )
 
-                            # random dropout for classifier-free guidance
-                            if torch.rand(1) < conditional_pdrop:
-                                obs_cond.zero_()
+                            # different CFG training stragety
+                            cond_prob = conditional_pdrop
+                            if use_two_stage:
+                                if epoch_idx < num_epochs * 0.8:
+                                    cond_prob = 0.3 if use_large_drop_prob else 0.1
+                                else:
+                                    cond_prob = 1.0
+                            elif use_large_drop_prob:
+                                cond_prob = 0.3
 
-                            # predict the noise residual
-                            noise_pred = nets["noise_pred_net"](
-                                noisy_actions, timesteps, global_cond=obs_cond
-                            )
+                            if use_batch_split:
+                                ratio = 0.2
+                                B_uncond = int(B * ratio)
+                                obs_cond = obs_cond.clone()
+                                obs_cond[:B_uncond] = 0.0
+                                is_cond_mask = torch.ones(B).bool()
+                                is_cond_mask[:B_uncond] = False
+                            else:
+                                drop_mask = torch.rand(B, device=self.device) < cond_prob
+                                obs_cond = obs_cond.clone()
+                                obs_cond[drop_mask] = 0.0
 
-                            # L2 loss
-                            loss = nn.functional.mse_loss(noise_pred, noise)
+                            if not use_mixed_loss:
+                                # 常规 CFG loss（单一预测）
+                                noise_pred = nets["noise_pred_net"](noisy_actions, timesteps, global_cond=obs_cond)
+                                loss = nn.functional.mse_loss(noise_pred, noise)
+                            else:
+                                # 混合 loss
+                                cond_out = nets["noise_pred_net"](noisy_actions, timesteps, global_cond=obs_cond)
+                                uncond_out = nets["noise_pred_net"](noisy_actions, timesteps,
+                                                                    global_cond=torch.zeros_like(obs_cond))
+                                loss_cond = nn.functional.mse_loss(cond_out, noise)
+                                loss_uncond = nn.functional.mse_loss(uncond_out, noise)
+                                loss = 0.5 * loss_cond + 0.5 * loss_uncond
+
+                            # # random dropout for classifier-free guidance
+                            # if torch.rand(1) < conditional_pdrop:
+                            #     obs_cond.zero_()
+                            #
+                            # # predict the noise residual
+                            # noise_pred = nets["noise_pred_net"](
+                            #     noisy_actions, timesteps, global_cond=obs_cond
+                            # )
+                            #
+                            # # L2 loss
+                            # loss = nn.functional.mse_loss(noise_pred, noise)
 
                         # Evaluation
                         else:
