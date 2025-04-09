@@ -348,6 +348,8 @@ class DiffusionPolicy:
         conditional_pdrop=0.1,
         cfg_options=None,
     ):
+        print("Dffusion Training with CFG Mode")
+
         if cfg_options is None:
             cfg_dict = dict()
         else:
@@ -358,6 +360,7 @@ class DiffusionPolicy:
         use_batch_split = cfg_dict.get("use_batch_split", False)
         use_mixed_loss = cfg_dict.get("use_mixed_loss", False)
         use_two_stage = cfg_dict.get("use_two_stage", False)
+        unconditional_training = cfg_dict.get("unconditional_training", False)
 
         print(f"cfg_dict: {cfg_dict}")
 
@@ -459,6 +462,9 @@ class DiffusionPolicy:
                                 obs_cond[:B_uncond] = 0.0
                                 is_cond_mask = torch.ones(B).bool()
                                 is_cond_mask[:B_uncond] = False
+                            elif unconditional_training:
+                                print("Unconditional training")
+                                obs_cond = torch.zeros_like(obs_cond)
                             else:
                                 drop_mask = torch.rand(B, device=self.device) < cond_prob
                                 obs_cond = obs_cond.clone()
@@ -940,7 +946,7 @@ class DiffusionPolicy:
                 sample=naction, timestep=k, global_cond=obs_cond
             )
             uncond_noise_pred = self.ema_nets["noise_pred_net"](
-                sample=naction, timestep=k, global_cond=torch.zeros(obs_cond.shape, device=self.device)
+                sample=naction, timestep=k, global_cond=torch.zeros_like(obs_cond)
             )
             # noise_pred = (1 + gamma) * noise_pred - gamma * uncond_noise_pred
             # noise_pred = uncond_noise_pred

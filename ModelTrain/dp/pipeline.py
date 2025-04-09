@@ -783,13 +783,13 @@ if __name__ == "__main__":
     args.add_argument("--obs_horizon", type=int, default=1)
     args.add_argument("--action_horizon", type=int, default=8)
     args.add_argument("--pred_horizon", type=int, default=16)
-    args.add_argument("--epochs", type=int, default=50)
+    args.add_argument("--epochs", type=int, default=300)
 
     # input config
     args.add_argument("--traj_type", type=str, default="plain")
     args.add_argument("--prefix", type=str, default=None)
     args.add_argument("--save_path", type=str, default=None)
-    args.add_argument("--load_path", type=str, default="/home/zhuoli/dobot_xtrainer/model/dp_cfg_plate_wipping_BatchSplit_20250408/0408_095529_6cuA-camera=012-identity=False-repr=IP-oh=1-ah=8-ph=16-prefix=None-do=0.0-imgos=32-wd=1e-05-use_ddim=True-binarize_touch=False/model_epoch_50.ckpt")
+    args.add_argument("--load_path", type=str, default=None)
 
     args.add_argument("--eval", type=boolean_string, default=False)
     args.add_argument(
@@ -802,7 +802,7 @@ if __name__ == "__main__":
                       default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data/manidp_plate_wiping/collect_data")
     args.add_argument("--data_prefix", type=str, default=None)
     args.add_argument("--model_save_path", type=str,
-                      default="/home/zhuoli/dobot_xtrainer/model/dp_cfg_plate_wipping_BatchSplit_20250408")
+                      default="/home/zhuoli/dobot_xtrainer/model/dp_cfg_plate_wipping_UnconditionalTraining_20250408")
 
     args.add_argument("--clip_far", type=boolean_string, default=False)
     args.add_argument("--color_jitter", type=boolean_string, default=False)
@@ -830,7 +830,7 @@ if __name__ == "__main__":
     args.add_argument("--gpu", type=int, default=0)
 
     args.add_argument("--camera_indices", type=str, default="012")
-    args.add_argument("--save_freq", type=int, default=50)
+    args.add_argument("--save_freq", type=int, default=100)
     args.add_argument("--eval_freq", type=int, default=10)
 
     args.add_argument("--add_model_save_path_suffix", type=boolean_string, default=True)
@@ -858,8 +858,6 @@ if __name__ == "__main__":
                       default="/home/zhuoli/dobot_xtrainer/config/cfg_options.yaml")
 
     args = args.parse_args()
-
-
 
     if args.gpu is not None:
         torch.cuda.set_device("cuda:{}".format(args.gpu))

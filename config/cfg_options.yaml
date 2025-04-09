@@ -1,5 +1,6 @@
 cfg_options:
   use_large_drop_prob: false
-  use_batch_split: true
+  use_batch_split: false
   use_mixed_loss: false
   use_two_stage: false
+  uncondtional_training: true
