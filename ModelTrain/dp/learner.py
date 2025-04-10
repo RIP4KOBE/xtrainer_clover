@@ -16,7 +16,7 @@ from ModelTrain.dp.models import *
 from torch.nn.functional import mse_loss
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
-from vis_utils import visualize_trajectory, forward_kinematics
+from utils import visualize_trajectory, forward_kinematics
 
 
 def normalize_data(data, stats):
@@ -831,7 +831,7 @@ class DiffusionPolicy:
 
             # Diffusion-es parameter initialization
             trunc_step_schedule = np.linspace(5, 1, cem_iters).astype(int)
-            noise_scale = 1.0
+            noise_scale = 0.1
 
             # Initialize elite set
             noisy_action = torch.randn(
@@ -899,12 +899,17 @@ class DiffusionPolicy:
         #         population_trajectories[i], stats["action"]
         #     )
         population_trajectories = unnormalize_data(population_trajectories, stats["action"])
-        print("population_trajectories shape", population_trajectories.shape)
         best_trajectory = population_trajectories[population_scores.argmin()]
-        print("best_trajectory", best_trajectory, "shape", best_trajectory.shape)
 
+        # align the trajectory
+
+        # visualize the trajectory
         if visualize:
             visualize_trajectory(population_trajectories, best_trajectory)
+
+        # schedule the executed trajectory
+
+
 
         # only take action_horizon number of actions
         start = self.obs_horizon - 1
@@ -949,7 +954,7 @@ class DiffusionPolicy:
                 sample=naction, timestep=k, global_cond=torch.zeros_like(obs_cond)
             )
             # noise_pred = (1 + gamma) * noise_pred - gamma * uncond_noise_pred
-            # noise_pred = uncond_noise_pred
+            noise_pred = uncond_noise_pred
 
             if deterministic:
                 eta = 0.0
