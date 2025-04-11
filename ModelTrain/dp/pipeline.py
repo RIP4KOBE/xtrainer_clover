@@ -425,7 +425,7 @@ class Agent:
         )
         return pred
 
-    def modulate(self, obs_deque: collections.deque, num_diffusion_iters=15):
+    def modulate(self, obs_deque: collections.deque, num_diffusion_iters=15, traj_origin=None):
         """
         data: dict
             data['image']: torch.tensor (1,5,224,224)
@@ -433,7 +433,7 @@ class Agent:
             data['pos']: torch.tensor (1,24)
         """
         pred = self.policy.run_diffusion_es(
-            self.stats, obs_deque, num_diffusion_iters=num_diffusion_iters, visualize=True
+            self.stats, obs_deque, num_diffusion_iters=num_diffusion_iters, traj_origin=traj_origin, visualize=True
         )
         return pred
 

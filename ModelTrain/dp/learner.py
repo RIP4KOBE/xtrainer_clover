@@ -16,7 +16,7 @@ from ModelTrain.dp.models import *
 from torch.nn.functional import mse_loss
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
-from utils import visualize_trajectory, forward_kinematics
+from utils import visualize_trajectory, forward_kinematics,align_trajs_to_origin,bimanual_coordinator
 
 
 def normalize_data(data, stats):
@@ -770,7 +770,7 @@ class DiffusionPolicy:
         return mse
 
 
-    def run_diffusion_es(self, stats, obs_deque, num_diffusion_iters=None, constraints=None,
+    def run_diffusion_es(self, stats, obs_deque, num_diffusion_iters=None, constraints=None, traj_origin=None,
                          use_cem=False, cem_iters=20,
                          num_elites=32,
                          temperature=0.1, visualize=False):
@@ -891,25 +891,27 @@ class DiffusionPolicy:
         print("Diffusion-ES planning time", time2 - time1)
         print("population_scores", population_scores)
         print("best score", population_scores.min())
+        print("traj_origin shape", traj_origin.shape)
         # unnormalize action
         population_trajectories = population_trajectories.detach().to("cpu").numpy()
-        # unnormalize action of population_trajectories in for loop
-        # for i in range(population_trajectories.shape[0]):
-        #     population_trajectories[i] = unnormalize_data(
-        #         population_trajectories[i], stats["action"]
-        #     )
         population_trajectories = unnormalize_data(population_trajectories, stats["action"])
-        best_trajectory = population_trajectories[population_scores.argmin()]
 
         # align the trajectory
+        population_trajectories, left_ee_positions, right_ee_positions = align_trajs_to_origin(population_trajectories, traj_origin)
+
+        # select the best trajectory
+        best_trajectory = population_trajectories[population_scores.argmin()]
 
         # visualize the trajectory
         if visualize:
-            visualize_trajectory(population_trajectories, best_trajectory)
+            visualize_trajectory(left_ee_positions, right_ee_positions, best_trajectory)
 
         # schedule the executed trajectory
-
-
+        best_trajectory = bimanual_coordinator(
+            mode="left",
+            traj_origin=traj_origin,
+            best_trajectory=best_trajectory
+        )
 
         # only take action_horizon number of actions
         start = self.obs_horizon - 1
@@ -1011,8 +1013,8 @@ class DiffusionPolicy:
                 final_height = ee_position[i, -1, 2]  # Last timestep
 
                 # Compute reward as the height increase from the first to the last timestep
-                scores[i] = final_height - initial_height
-                # scores[i] = initial_height - final_height
+                # scores[i] = final_height - initial_height
+                scores[i] = initial_height - final_height
             scores = -torch.as_tensor(scores, device=device)
             return scores, {}
 

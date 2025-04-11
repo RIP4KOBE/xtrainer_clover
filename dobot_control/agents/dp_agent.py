@@ -211,7 +211,7 @@ class BimanualDPAgent:
             self.obsque.append(obs)
 
         # if action queue is not empty, return the first action in the queue
-        if len(self.action_queue) > 0:
+        if len(self.action_queue) > 0 and not modulation:
             act = self.action_queue.popleft()
 
         # if action queue is empty, predict new actions
@@ -224,7 +224,7 @@ class BimanualDPAgent:
                 )
             else:
                 pred = self.dp.modulate(
-                    self.obsque, num_diffusion_iters=self.num_diffusion_iters
+                    self.obsque, num_diffusion_iters=self.num_diffusion_iters, traj_origin=self.action_queue[0],
                 )
 
             time2 = time.time()
