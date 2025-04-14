@@ -463,7 +463,6 @@ class DiffusionPolicy:
                                 is_cond_mask = torch.ones(B).bool()
                                 is_cond_mask[:B_uncond] = False
                             elif unconditional_training:
-                                print("Unconditional training")
                                 obs_cond = torch.zeros_like(obs_cond)
                             else:
                                 drop_mask = torch.rand(B, device=self.device) < cond_prob
@@ -833,7 +832,7 @@ class DiffusionPolicy:
             trunc_step_schedule = np.linspace(5, 1, cem_iters).astype(int)
             noise_scale = 0.1
 
-            # Initialize elite set
+
             noisy_action = torch.randn(
                 (self.sampling_batch_size, self.pred_horizon, self.action_dim), device=self.device
             )
@@ -841,6 +840,7 @@ class DiffusionPolicy:
             naction = noisy_action
             self.noise_scheduler.set_timesteps(num_diffusion_iters)
 
+            # Initialize elite set
             population_trajectories, population_scores, population_info = self.rollout(
                 obs_cond,
                 naction,

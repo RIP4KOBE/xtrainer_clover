@@ -252,7 +252,8 @@ def forward_kinematics(joint_angles):
     - End-effector pose (batch_size, prediction_horizon, action_dim).
     """
     # load the URDF files for the left and right arms
-    urdf = "/home/zhuoli/xtrainer_clover/assets/urdf/nova2_robot.urdf"
+    # urdf = "/home/zhuoli/xtrainer_clover/assets/urdf/nova2_robot.urdf"
+    urdf = "/home/zhuoli/dobot_xtrainer/assets/urdf/nova2_robot.urdf"
     xtrainer_arm = rtb.robot.ERobot.URDF(urdf)
 
     if joint_angles.ndim == 2:
@@ -289,7 +290,9 @@ def inverse_kinematics(ee_positions, ee_orientations, initial_joint):
     - success_flags: np.ndarray of shape (batch_size, prediction_horizon), True if IK succeeded
     """
     # Load robot model (6-DOF)
-    urdf = "/home/zhuoli/xtrainer_clover/assets/urdf/nova2_robot.urdf"
+    # urdf = "/home/zhuoli/xtrainer_clover/assets/urdf/nova2_robot.urdf"
+    urdf = "/home/zhuoli/dobot_xtrainer/assets/urdf/nova2_robot.urdf"
+
     robot = rtb.robot.ERobot.URDF(urdf)
 
     batch_size, prediction_horizon, _ = ee_positions.shape
@@ -303,17 +306,17 @@ def inverse_kinematics(ee_positions, ee_orientations, initial_joint):
             target_pose = SE3.Rt(R=orient, t=pos)
 
             try:
-                q, success, _, _, _ = robot.ik_LM(target_pose)  # 解包 tuple
-
-                if success:
-                    joint_angles[b, t, :] = q
-                    success_flags[b, t] = True
-                else:
-                    print(f"IK failed (success={success}) at batch {b}, step {t}")
-                    success_flags[b, t] = False
+                # q, success, _, _, _ = robot.ik_LM(target_pose)
+                solution = robot.ikine_LM(target_pose, q0=initial_joint)
 
             except Exception as e:
                 print(f"IK exception at batch {b}, step {t}: {e}")
+
+            if solution.success:
+                joint_angles[b, t, :] = solution.q
+                success_flags[b, t] = True
+            else:
+                print(f"IK failed at batch {b}, step {t}")
                 success_flags[b, t] = False
 
     return joint_angles, success_flags
@@ -465,6 +468,7 @@ def align_trajs_to_origin(population_trajectories, traj_origin):
 
     left_offsets = origin_left_pos[:, 0, :] - left_ee_positions[:, 0, :]    # (B, 3)
     right_offsets = origin_right_pos[:, 0, :] - right_ee_positions[:, 0, :] # (B, 3)
+    print("left_offsets", left_offsets, "right_offsets", right_offsets)
 
     aligned_left_ee_positions = left_ee_positions + left_offsets[:, np.newaxis, :]    # (B, T, 3)
     aligned_right_ee_positions = right_ee_positions + right_offsets[:, np.newaxis, :] # (B, T, 3)
@@ -512,3 +516,72 @@ def bimanual_coordinator(mode: str,
         pass
 
     return best_trajectory
+
+
+def kinematic_func_test():
+    """
+    Test the correctness of forward and inverse kinematics functions.
+    """
+    # Configuration
+    batch_size = 2
+    prediction_horizon = 3
+    joint_dim = 6
+
+    # Generate random joint angles within valid range
+    np.random.seed(42)
+    random_joint_angles = np.random.uniform(
+        low=-np.pi, high=np.pi,
+        size=(batch_size, prediction_horizon, joint_dim)
+    )
+
+    # Step 1: Forward Kinematics to obtain end-effector poses
+    ee_pos, ee_orient = forward_kinematics(random_joint_angles)
+
+    # Step 2: Inverse Kinematics to recover joint angles from poses
+    recovered_joint_angles, success_flags = inverse_kinematics(
+        ee_pos, ee_orient, initial_joint=None
+    )
+
+    # Step 3: Forward Kinematics again on recovered joint angles
+    ee_pos_recovered, ee_orient_recovered = forward_kinematics(recovered_joint_angles)
+
+    # Step 4: Compute position and orientation errors
+    pos_error = np.linalg.norm(ee_pos - ee_pos_recovered, axis=-1)  # Euclidean distance
+
+    orient_error = np.zeros((batch_size, prediction_horizon))
+    for b in range(batch_size):
+        for t in range(prediction_horizon):
+            R1 = ee_orient[b, t]
+            R2 = ee_orient_recovered[b, t]
+            dR = R1 @ R2.T
+            # Compute orientation error using angle between rotation matrices
+            angle_error = np.arccos(np.clip((np.trace(dR) - 1) / 2, -1.0, 1.0))
+            orient_error[b, t] = angle_error
+
+    # Report results
+    print("\n==== Kinematics Test Results ====")
+    print("Joint angles (original):\n", random_joint_angles)
+    print("Joint angles (recovered):\n", recovered_joint_angles)
+
+    print("\nSuccess rate: {:.2f}%".format(100 * np.mean(success_flags)))
+    print("Max position error: {:.6f} m".format(np.max(pos_error)))
+    print("Mean position error: {:.6f} m".format(np.mean(pos_error)))
+    print("Max orientation error: {:.6f} rad".format(np.max(orient_error)))
+    print("Mean orientation error: {:.6f} rad".format(np.mean(orient_error)))
+    print("=================================\n")
+
+    # Optional assertions for automated testing
+    assert np.all(pos_error < 1e-3), "Position error too large"
+    assert np.all(orient_error < 1e-2), "Orientation error too large"
+    assert np.all(success_flags), "Some IK solutions failed"
+
+
+
+if __name__ == "__main__":
+    kinematic_func_test()  # Run the test function
+    # Example usage
+    # traj_origin = np.random.rand(1, 16, 14)  # Example trajectory
+    # best_trajectory = np.random.rand(1, 16, 14)  # Example best trajectory
+    # mode = "left"  # or "right", "bimanual"
+    # updated_trajectory = bimanual_coordinator(mode, traj_origin, best_trajectory)
+    # print(updated_trajectory)
