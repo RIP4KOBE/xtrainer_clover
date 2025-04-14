@@ -851,41 +851,41 @@ class DiffusionPolicy:
             )
 
             time1 = time.time()
-            # for i in range(cem_iters):
-            #     n_trunc_steps = trunc_step_schedule[i]
-            #
-            #     """
-            #     Local MPPI update
-            #     """
-            #     # Compute reward-probabilities
-            #     reward_probs = torch.exp(temperature * -population_scores)
-            #     reward_probs = reward_probs / reward_probs.sum()
-            #     probs = reward_probs
-            #
-            #     """
-            #     Resample and mutate (renoise-denoise)
-            #     """
-            #     if use_cem:
-            #         elites = torch.argsort(population_scores)[:num_elites]
-            #         indices = torch.randint(0, num_elites, (self.sampling_batch_size,), device=self.device)
-            #         population_trajectories = population_trajectories[elites[indices]]
-            #         population_trajectories = self.renoise(population_trajectories, n_trunc_steps)
-            #     else:
-            #         indices = torch.multinomial(probs, self.sampling_batch_size,
-            #                                     replacement=True)  # torch.multinomial(probs, 1).squeeze(1)
-            #         population_trajectories = population_trajectories[indices]
-            #         population_trajectories = self.renoise(population_trajectories, n_trunc_steps)
-            #
-            #     # Denoise
-            #     population_trajectories, population_scores, population_info = self.rollout(
-            #         obs_cond,
-            #         population_trajectories,
-            #         constraints,
-            #         initial_rollout=False,
-            #         deterministic=False,
-            #         n_trunc_steps=n_trunc_steps,
-            #         noise_scale=noise_scale,
-            #     )
+            for i in range(cem_iters):
+                n_trunc_steps = trunc_step_schedule[i]
+
+                """
+                Local MPPI update
+                """
+                # Compute reward-probabilities
+                reward_probs = torch.exp(temperature * -population_scores)
+                reward_probs = reward_probs / reward_probs.sum()
+                probs = reward_probs
+
+                """
+                Resample and mutate (renoise-denoise)
+                """
+                if use_cem:
+                    elites = torch.argsort(population_scores)[:num_elites]
+                    indices = torch.randint(0, num_elites, (self.sampling_batch_size,), device=self.device)
+                    population_trajectories = population_trajectories[elites[indices]]
+                    population_trajectories = self.renoise(population_trajectories, n_trunc_steps)
+                else:
+                    indices = torch.multinomial(probs, self.sampling_batch_size,
+                                                replacement=True)  # torch.multinomial(probs, 1).squeeze(1)
+                    population_trajectories = population_trajectories[indices]
+                    population_trajectories = self.renoise(population_trajectories, n_trunc_steps)
+
+                # Denoise
+                population_trajectories, population_scores, population_info = self.rollout(
+                    obs_cond,
+                    population_trajectories,
+                    constraints,
+                    initial_rollout=False,
+                    deterministic=False,
+                    n_trunc_steps=n_trunc_steps,
+                    noise_scale=noise_scale,
+                )
 
         time2 = time.time()
         print("Diffusion-ES planning time", time2 - time1)

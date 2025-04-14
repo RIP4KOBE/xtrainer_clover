@@ -252,8 +252,8 @@ def forward_kinematics(joint_angles):
     - End-effector pose (batch_size, prediction_horizon, action_dim).
     """
     # load the URDF files for the left and right arms
-    # urdf = "/home/zhuoli/xtrainer_clover/assets/urdf/nova2_robot.urdf"
-    urdf = "/home/zhuoli/dobot_xtrainer/assets/urdf/nova2_robot.urdf"
+    urdf = "/home/zhuoli/xtrainer_clover/assets/urdf/nova2_robot.urdf"
+    # urdf = "/home/zhuoli/dobot_xtrainer/assets/urdf/nova2_robot.urdf"
     xtrainer_arm = rtb.robot.ERobot.URDF(urdf)
 
     if joint_angles.ndim == 2:
@@ -290,8 +290,8 @@ def inverse_kinematics(ee_positions, ee_orientations, initial_joint):
     - success_flags: np.ndarray of shape (batch_size, prediction_horizon), True if IK succeeded
     """
     # Load robot model (6-DOF)
-    # urdf = "/home/zhuoli/xtrainer_clover/assets/urdf/nova2_robot.urdf"
-    urdf = "/home/zhuoli/dobot_xtrainer/assets/urdf/nova2_robot.urdf"
+    urdf = "/home/zhuoli/xtrainer_clover/assets/urdf/nova2_robot.urdf"
+    # urdf = "/home/zhuoli/dobot_xtrainer/assets/urdf/nova2_robot.urdf"
 
     robot = rtb.robot.ERobot.URDF(urdf)
 
@@ -301,13 +301,14 @@ def inverse_kinematics(ee_positions, ee_orientations, initial_joint):
 
     for b in range(batch_size):
         for t in range(prediction_horizon):
+            # print(f"IK batch {b}, step {t}")
             pos = ee_positions[b, t, :]  # (x, y, z)
             orient = ee_orientations[b, t, :, :]  # 3x3 rotation matrix
             target_pose = SE3.Rt(R=orient, t=pos)
 
             try:
                 # q, success, _, _, _ = robot.ik_LM(target_pose)
-                solution = robot.ikine_LM(target_pose, q0=initial_joint)
+                solution = robot.ikine_LM(target_pose, q0=initial_joint, ilimit=15, slimit=50,)
 
             except Exception as e:
                 print(f"IK exception at batch {b}, step {t}: {e}")
@@ -468,17 +469,17 @@ def align_trajs_to_origin(population_trajectories, traj_origin):
 
     left_offsets = origin_left_pos[:, 0, :] - left_ee_positions[:, 0, :]    # (B, 3)
     right_offsets = origin_right_pos[:, 0, :] - right_ee_positions[:, 0, :] # (B, 3)
-    print("left_offsets", left_offsets, "right_offsets", right_offsets)
+    # print("left_offsets", left_offsets, "right_offsets", right_offsets)
 
     aligned_left_ee_positions = left_ee_positions + left_offsets[:, np.newaxis, :]    # (B, T, 3)
     aligned_right_ee_positions = right_ee_positions + right_offsets[:, np.newaxis, :] # (B, T, 3)
 
     aligned_left_joints, success_left = inverse_kinematics(aligned_left_ee_positions, left_ee_orientations, origin_left_arm)
-    aligned_right_joints, success_right = inverse_kinematics(aligned_right_ee_positions, right_ee_orientations, origin_right_arm)
+    # aligned_right_joints, success_right = inverse_kinematics(aligned_right_ee_positions, right_ee_orientations, origin_right_arm)
 
     aligned_population_trajectories = population_trajectories.copy()
     aligned_population_trajectories[:, :, :6] = aligned_left_joints
-    aligned_population_trajectories[:, :, 7:13] = aligned_right_joints
+    # aligned_population_trajectories[:, :, 7:13] = aligned_right_joints
 
     return aligned_population_trajectories, aligned_left_ee_positions, aligned_right_ee_positions
 
