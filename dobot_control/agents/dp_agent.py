@@ -2,7 +2,7 @@ import collections
 import json
 import os
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 import numpy as np
 import quaternion
@@ -162,6 +162,7 @@ class BimanualDPAgent:
         self.predict_pos_delta = dp_args["predict_pos_delta"]
         assert not (self.predict_eef_delta and self.predict_pos_delta)
         self.control = get_reset_joints(ur_eef=self.predict_eef_delta)
+        self.modulated = False
 
         self.num_diffusion_iters = dp_args["num_diffusion_iters"]
 
@@ -199,7 +200,7 @@ class BimanualDPAgent:
         for i in range(25):  # burn in
             self.act(example_obs)
 
-    def act(self, obs: Dict[str, Any], modulation = False) -> np.ndarray:
+    def act(self, obs: Dict[str, Any], modulation=False, last_action=None) -> Tuple[np.ndarray, bool]:
         obs = self.dp.get_observation([obs], load_img=True)
         if "img" in obs:
             obs["img"] = self.dp.eval_transform(obs["img"].squeeze(0))
@@ -210,10 +211,13 @@ class BimanualDPAgent:
         else:
             self.obsque.append(obs)
 
-        # if action queue is not empty, return the first action in the queue
-        if len(self.action_queue) > 0 and not modulation:
-            act = self.action_queue.popleft()
+        modulation_finished = False
 
+        # if action queue is not empty, return the first action in the queue
+        if len(self.action_queue) > 0:
+            act = self.action_queue.popleft()
+            if len(self.action_queue) == 0 and modulation:
+                modulation_finished = True
         # if action queue is empty, predict new actions
         else:
             time1 = time.time()
@@ -224,7 +228,7 @@ class BimanualDPAgent:
                 )
             else:
                 pred = self.dp.modulate(
-                    self.obsque, num_diffusion_iters=self.num_diffusion_iters, traj_origin=self.action_queue[0],
+                    self.obsque, num_diffusion_iters=self.num_diffusion_iters, traj_origin=last_action,
                 )
 
             time2 = time.time()
@@ -236,4 +240,4 @@ class BimanualDPAgent:
 
             act = self.action_queue.popleft()
 
-        return act
+        return act, modulation_finished

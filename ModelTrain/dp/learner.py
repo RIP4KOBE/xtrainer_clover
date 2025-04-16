@@ -908,7 +908,7 @@ class DiffusionPolicy:
 
         # schedule the executed trajectory
         best_trajectory = bimanual_coordinator(
-            mode="left",
+            mode="bimanual",
             traj_origin=traj_origin,
             best_trajectory=best_trajectory
         )
@@ -1013,8 +1013,8 @@ class DiffusionPolicy:
                 final_height = ee_position[i, -1, 2]  # Last timestep
 
                 # Compute reward as the height increase from the first to the last timestep
-                # scores[i] = final_height - initial_height
-                scores[i] = initial_height - final_height
+                scores[i] = final_height - initial_height
+                # scores[i] = initial_height - final_height
             scores = -torch.as_tensor(scores, device=device)
             return scores, {}
 
@@ -1123,7 +1123,7 @@ class DiffusionPolicy:
             return scores, {}
 
         ## Joint space pose-level NBCFs for bimanual trajectory modulation
-        def lift_elbows_higher(trajectory):
+        def lift_the_elbows(trajectory):
             """
             Compute the reward for 'lifting the elbows a bit higher' by using forward kinematics
             to get elbow positions in Cartesian space.
@@ -1156,8 +1156,11 @@ class DiffusionPolicy:
                 right_final_z = right_joint_positions[i, -1, 2]
 
                 # 奖励是：两个肘部高度提升的总和
-                left_lift = left_final_z - left_initial_z
-                right_lift = right_final_z - right_initial_z
+                # left_lift = left_final_z - left_initial_z
+                # right_lift = right_final_z - right_initial_z
+
+                left_lift = left_initial_z - left_final_z
+                right_lift = right_initial_z - right_final_z
 
                 scores[i] = left_lift + right_lift
 
@@ -1165,7 +1168,7 @@ class DiffusionPolicy:
             scores = -torch.as_tensor(scores, device=device)
             return scores, {}
 
-        return right_arm_height_downward
+        return lift_the_elbows
 
 
 

@@ -475,11 +475,11 @@ def align_trajs_to_origin(population_trajectories, traj_origin):
     aligned_right_ee_positions = right_ee_positions + right_offsets[:, np.newaxis, :] # (B, T, 3)
 
     aligned_left_joints, success_left = inverse_kinematics(aligned_left_ee_positions, left_ee_orientations, origin_left_arm)
-    # aligned_right_joints, success_right = inverse_kinematics(aligned_right_ee_positions, right_ee_orientations, origin_right_arm)
+    aligned_right_joints, success_right = inverse_kinematics(aligned_right_ee_positions, right_ee_orientations, origin_right_arm)
 
     aligned_population_trajectories = population_trajectories.copy()
     aligned_population_trajectories[:, :, :6] = aligned_left_joints
-    # aligned_population_trajectories[:, :, 7:13] = aligned_right_joints
+    aligned_population_trajectories[:, :, 7:13] = aligned_right_joints
 
     return aligned_population_trajectories, aligned_left_ee_positions, aligned_right_ee_positions
 
@@ -502,21 +502,24 @@ def bimanual_coordinator(mode: str,
     """
     assert mode in ["left", "right", "bimanual"], f"Invalid mode: {mode}"
     # assert traj_origin.shape == 14 and best_trajectory.shape[2] == 14, "Trajectory dim must be 14"
+    coordinate_traj = np.tile(traj_origin, (best_trajectory.shape[0], 1))
 
+    print("coordinate_traj", coordinate_traj.shape, "best_trajectory", best_trajectory.shape)
 
     if mode == "left":
         # Only update left arm joints (0:6)
-        best_trajectory[:, 7:13] = traj_origin[7:13]
+        coordinate_traj[:, :6] = best_trajectory[:, :6]
 
     elif mode == "right":
         # Only update right arm joints (7:13)
-        best_trajectory[:, :6] = traj_origin[:6]
+        coordinate_traj[:, 7:13] = best_trajectory[:, 7:13]
 
     elif mode == "bimanual":
         # Update both arms
-        pass
+        coordinate_traj[:, :6] = best_trajectory[:, :6]
+        coordinate_traj[:, 7:13] = best_trajectory[:, 7:13]
 
-    return best_trajectory
+    return coordinate_traj
 
 
 def kinematic_func_test():

@@ -82,7 +82,7 @@ def run_thread_cam(rs_cam, which_cam):
 def main(args):
 
    # camera init
-    global image_left, image_right, image_top, thread_run
+    global image_left, image_right, image_top, thread_run, running
     thread_run=True
     camera_dict = load_ini_data_camera()
     rs1 = RealSenseCamera(flip=False, device_id=camera_dict["left"])
@@ -195,12 +195,16 @@ def main(args):
             dp_observation['base_rgb'] = image_top
 
             if mode == "diffusion":
-                action = dp_model.act(dp_observation)  # Use planned trajectory
+                action, _ = dp_model.act(dp_observation)  # Use planned trajectory
             elif mode == "modulate":
-                action = dp_model.act(dp_observation, modulation=True)  # Use modulated trajectory
+                action, modulation_finished = dp_model.act(dp_observation, modulation=True,last_action = last_action)  # Use modulated trajectory
 
         else:
             action = act_model.predict(observation,t)
+
+        # modulated_flag = dp_model.get_modulation_flag()
+        # if modulated_flag:
+        #     running = False
 
         # print("infer_action:",action)
         if action[6]>1:
@@ -292,6 +296,11 @@ def main(args):
         # print("Read joint value time(ms)：", (time4 - time3) * 1000)
         t +=1
         # print("The total time(ms):", (time4 - time0) * 1000)
+
+
+        if args.agent_name == "dp" and mode == "modulate" and modulation_finished:
+            print("Trajectory execution finished. Waiting for next user input...")
+            running = False
 
 
     thread_run = False
