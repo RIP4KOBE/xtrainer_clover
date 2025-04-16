@@ -986,7 +986,7 @@ class DiffusionPolicy:
         """
         Each constraint is a function that maps an bimanual trajectory to some scalar cost to be minimized.
         """
-        ## A set of tested NBCFs for bimanual manipulation
+        ## Cartesian space pose-level NBCFs for bimanual trajectory modulation
         def left_arm_height_upward(trajectory):
             """
             Compute the reward for "raising the left arm slightly" based on joint angles.
@@ -1018,7 +1018,154 @@ class DiffusionPolicy:
             scores = -torch.as_tensor(scores, device=device)
             return scores, {}
 
-        return left_arm_height_upward
+        def right_arm_height_downward(trajectory):
+            """
+            Compute the reward for "lowering the right arm slightly" based on joint angles.
+
+            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
+                               Each trajectory consists of 16 timesteps, and each timestep has 14 joint angles
+                               (7 for the left arm, 7 for the right arm).
+            :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
+            """
+            # Convert trajectory to numpy and unnormalize
+            device = trajectory.device
+            trajectory = trajectory.detach().cpu().numpy()
+            trajectory = trajectory.reshape(-1, 16, 14)
+            trajectory = unnormalize_data(trajectory, stats["action"])
+            right_trajectory = trajectory[:, :, 7:13]  # Extract right arm joint angles
+
+            # Extract predicted right arm end-effector positions
+            ee_position, _  = forward_kinematics(right_trajectory)  # Shape: (batch, 16, 3)
+            scores = np.zeros(self.sampling_batch_size)
+
+            # Iterate scoring each trajectory in the batch
+            for i in range(self.sampling_batch_size):
+                initial_height = ee_position[i, 0, 2]  # First timestep height (z-axis)
+                final_height = ee_position[i, -1, 2]  # Last timestep height (z-axis)
+
+                # Compute reward as the height decrease from the first to the last timestep
+                scores[i] = initial_height - final_height
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
+        def both_arms_forward_motion(trajectory):
+            """
+            Compute the reward for "moving both hands forward" based on joint angles.
+
+            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
+                               Each trajectory consists of 16 timesteps, and each timestep has 14 joint angles
+                               (7 for the left arm, 7 for the right arm).
+            :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
+            """
+            # Convert trajectory to numpy and unnormalize
+            device = trajectory.device
+            trajectory = trajectory.detach().cpu().numpy()
+            trajectory = trajectory.reshape(-1, 16, 14)
+            trajectory = unnormalize_data(trajectory, stats["action"])
+
+            left_trajectory = trajectory[:, :, :6]
+            right_trajectory = trajectory[:, :, 7:13]
+
+            # Extract predicted end-effector positions for both arms
+            left_ee_position, _ = forward_kinematics(left_trajectory)  # Shape: (batch, 16, 3)
+            right_ee_position, _ = forward_kinematics(right_trajectory)  # Shape: (batch, 16, 3)
+
+            scores = np.zeros(self.sampling_batch_size)
+
+            # Iterate scoring each trajectory in the batch
+            for i in range(self.sampling_batch_size):
+                # Compute forward (x-axis) displacement for both hands
+                left_initial_x = left_ee_position[i, 0, 0]
+                left_final_x = left_ee_position[i, -1, 0]
+                right_initial_x = right_ee_position[i, 0, 0]
+                right_final_x = right_ee_position[i, -1, 0]
+
+                # Sum of forward displacements
+                left_forward = left_final_x - left_initial_x
+                right_forward = right_final_x - right_initial_x
+
+                scores[i] = left_forward + right_forward
+
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
+        def right_wrist_rotate_outward(trajectory):
+            """
+            Compute the reward for "rotating the right wrist slightly outward" based on joint angles.
+
+            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
+                               Each trajectory consists of 16 timesteps, and each timestep has 14 joint angles
+                               (7 for the left arm, 7 for the right arm).
+            :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
+            """
+            # Convert trajectory to numpy and unnormalize
+            device = trajectory.device
+            trajectory = trajectory.detach().cpu().numpy()
+            trajectory = trajectory.reshape(-1, 16, 14)
+            trajectory = unnormalize_data(trajectory, stats["action"])
+
+            # Extract right arm trajectory
+            right_trajectory = trajectory[:, :, 7:13]  # Right arm: joints 7 to 13
+
+            # Assuming the right wrist rotation corresponds to the last joint (index 6 of the 7 right arm joints)
+            wrist_joint_index = 5
+            scores = np.zeros(self.sampling_batch_size)
+
+            # Iterate through the batch and compute wrist rotation change
+            for i in range(self.sampling_batch_size):
+                initial_angle = right_trajectory[i, 0, wrist_joint_index]
+                final_angle = right_trajectory[i, -1, wrist_joint_index]
+
+                # Outward rotation is assumed to be a positive change in joint angle
+                scores[i] = final_angle - initial_angle
+
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
+        ## Joint space pose-level NBCFs for bimanual trajectory modulation
+        def lift_elbows_higher(trajectory):
+            """
+            Compute the reward for 'lifting the elbows a bit higher' by using forward kinematics
+            to get elbow positions in Cartesian space.
+
+            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual joint angle trajectories.
+                               Each trajectory has 16 timesteps and 14 joint angles (7 left + 7 right arm).
+            :return: Tensor of shape (batch,), reward scores for each trajectory.
+            """
+            # Step 1: Convert tensor to numpy and unnormalize
+            device = trajectory.device
+            trajectory = trajectory.detach().cpu().numpy()
+            trajectory = trajectory.reshape(-1, 16, 14)
+            trajectory = unnormalize_data(trajectory, stats["action"])
+
+            # Step 2: Separate left and right arm joint angles
+            left_trajectory = trajectory[:, :, :6]  # (batch, 16, 7)
+            right_trajectory = trajectory[:, :, 7:13]  # (batch, 16, 7)
+
+            # Step 3: Run FK to get joint positions of the whole kinematic chain
+            left_joint_positions, _ = forward_kinematics(left_trajectory, ee_link="Link3")
+            right_joint_positions, _ = forward_kinematics(right_trajectory, ee_link="Link3")
+
+            # Step 5: 计算每个trajectory中肘部高度的变化
+            scores = np.zeros(self.sampling_batch_size)
+
+            for i in range(self.sampling_batch_size):
+                left_initial_z = left_joint_positions[i, 0, 2]
+                left_final_z = left_joint_positions[i, -1, 2]
+                right_initial_z = right_joint_positions[i, 0, 2]
+                right_final_z = right_joint_positions[i, -1, 2]
+
+                # 奖励是：两个肘部高度提升的总和
+                left_lift = left_final_z - left_initial_z
+                right_lift = right_final_z - right_initial_z
+
+                scores[i] = left_lift + right_lift
+
+            # 转换为 torch tensor 并返回负的 cost
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
+        return right_arm_height_downward
 
 
 

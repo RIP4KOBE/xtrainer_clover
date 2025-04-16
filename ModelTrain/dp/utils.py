@@ -241,7 +241,7 @@ def prefix_metrics(metrics, prefix):
 
 
 
-def forward_kinematics(joint_angles):
+def forward_kinematics(joint_angles, ee_link=None):
     """
     Compute forward kinematics (FK) to transform joint angles into end-effector pose in Cartesian space.
 
@@ -270,7 +270,7 @@ def forward_kinematics(joint_angles):
     for b in range(batch_size):
         for t in range(prediction_horizon):
             angles = joint_angles[b, t, :]
-            T_ee = xtrainer_arm.fkine(angles)
+            T_ee = xtrainer_arm.fkine(q=angles, end=ee_link)  # Forward kinematics to get end-effector pose
             T_ee = np.array(T_ee.A)
             ee_position[b, t, :] = T_ee[:3, 3]
             ee_orientations[b, t, :, :] = T_ee[:3, :3]
