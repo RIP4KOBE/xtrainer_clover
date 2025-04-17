@@ -522,6 +522,44 @@ def bimanual_coordinator(mode: str,
     return coordinate_traj
 
 
+import numpy as np
+
+def bimanual_frame_transform(left_positions, right_positions):
+    """
+    Transform right arm end-effector positions to the left arm base frame.
+
+    Parameters:
+    - left_positions: np.ndarray of shape (batch, 16, 3)
+    - right_positions: np.ndarray of shape (batch, 16, 3)
+
+    Returns:
+    - left_positions_transformed: same as input (batch, 16, 3)
+    - right_positions_transformed: transformed to left base frame (batch, 16, 3)
+    """
+
+    assert left_positions.shape == right_positions.shape, \
+        "Left and right positions must have the same shape (batch, 16, 3)"
+    assert left_positions.shape[1:] == (16, 3), \
+        "Positions must have shape (batch, 16, 3)"
+
+    # Rotation matrix: 180 deg about Z (clockwise)
+    R = np.array([
+        [-1,  0,  0],
+        [ 0, -1,  0],
+        [ 0,  0,  1]
+    ])
+
+    # Translation vector from right base to left base
+    t = np.array([0.0, -1.08, 0.0])  # in meters
+
+    # Apply transformation: p_left = R * p_right + t
+    # right_positions: (batch, 16, 3)
+    # R: (3, 3) → use einsum to apply across batch
+    right_transformed = np.einsum('ij,btj->bti', R, right_positions) + t
+
+    return left_positions, right_transformed
+
+
 def kinematic_func_test():
     """
     Test the correctness of forward and inverse kinematics functions.

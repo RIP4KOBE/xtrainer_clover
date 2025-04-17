@@ -16,7 +16,7 @@ from ModelTrain.dp.models import *
 from torch.nn.functional import mse_loss
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
-from utils import visualize_trajectory, forward_kinematics,align_trajs_to_origin,bimanual_coordinator
+from utils import visualize_trajectory, forward_kinematics,align_trajs_to_origin, bimanual_coordinator, bimanual_frame_transform
 
 
 def normalize_data(data, stats):
@@ -1130,7 +1130,7 @@ class DiffusionPolicy:
 
         def widen_hands_distance(trajectory):
             """
-            Compute the reward for "widen the distance between your hands" based on end-effector positions.
+            Compute the reward for "Spread your hands" based on end-effector positions.
 
             :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
                                Each trajectory has 16 timesteps, and each timestep has 14 joint angles
@@ -1151,51 +1151,22 @@ class DiffusionPolicy:
             left_ee_position, _ = forward_kinematics(left_trajectory)  # Shape: (batch, 16, 3)
             right_ee_position, _ = forward_kinematics(right_trajectory)  # Shape: (batch, 16, 3)
 
+            left_ee_position, right_ee_position = bimanual_frame_transform(left_ee_position, right_ee_position)
+
             scores = np.zeros(left_ee_position.shape[0])  # batch size
 
             for i in range(left_ee_position.shape[0]):
                 # Compute initial and final distances between left and right hands
                 initial_dist = np.linalg.norm(left_ee_position[i, 0] - right_ee_position[i, 0])
                 final_dist = np.linalg.norm(left_ee_position[i, -1] - right_ee_position[i, -1])
+
+                # initial_dist = left_ee_position[i, 0, 1] - right_ee_position[i, 0, 1]
+                # final_dist = left_ee_position[i, -1, 1] - right_ee_position[i, -1, 1]
 
                 # Reward is the increase in distance
                 scores[i] = final_dist - initial_dist
+                # scores[i] = initial_dist - final_dist
 
-            scores = -torch.as_tensor(scores, device=device)
-            return scores, {}
-
-        def bring_hands_closer(trajectory):
-            """
-            Compute the reward for "bring both hands closer to each other" based on end-effector positions.
-
-            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
-                               Each trajectory has 16 timesteps, and each timestep has 14 joint angles
-                               (7 for the left arm, 7 for the right arm).
-            :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
-            """
-            # Convert trajectory to numpy and unnormalize
-            device = trajectory.device
-            trajectory = trajectory.detach().cpu().numpy()
-            trajectory = trajectory.reshape(-1, 16, 14)
-            trajectory = unnormalize_data(trajectory, stats["action"])
-
-            # Extract left and right arm joint angles
-            left_trajectory = trajectory[:, :, :6]
-            right_trajectory = trajectory[:, :, 7:13]
-
-            # Forward kinematics to get end-effector positions
-            left_ee_position, _ = forward_kinematics(left_trajectory)  # Shape: (batch, 16, 3)
-            right_ee_position, _ = forward_kinematics(right_trajectory)  # Shape: (batch, 16, 3)
-
-            scores = np.zeros(left_ee_position.shape[0])  # batch size
-
-            for i in range(left_ee_position.shape[0]):
-                # Compute initial and final distances between left and right hands
-                initial_dist = np.linalg.norm(left_ee_position[i, 0] - right_ee_position[i, 0])
-                final_dist = np.linalg.norm(left_ee_position[i, -1] - right_ee_position[i, -1])
-
-                # Reward is the reduction in distance (hands getting closer)
-                scores[i] = initial_dist - final_dist
 
             scores = -torch.as_tensor(scores, device=device)
             return scores, {}
@@ -1338,7 +1309,7 @@ class DiffusionPolicy:
 
         # </editor-fold>
 
-        return widen_hands_distance
+        return lift_the_elbows
 
 
 
