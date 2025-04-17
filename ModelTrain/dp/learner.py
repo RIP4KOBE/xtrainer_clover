@@ -986,7 +986,9 @@ class DiffusionPolicy:
         """
         Each constraint is a function that maps an bimanual trajectory to some scalar cost to be minimized.
         """
-        ## Cartesian space pose-level NBCFs for bimanual trajectory modulation
+        # NBCFs for bimanual trajectory modulation
+
+        # <editor-fold desc="single arm-cartesian space">
         def left_arm_height_upward(trajectory):
             """
             Compute the reward for "raising the left arm slightly" based on joint angles.
@@ -1048,6 +1050,43 @@ class DiffusionPolicy:
             scores = -torch.as_tensor(scores, device=device)
             return scores, {}
 
+        def right_wrist_rotate_outward(trajectory):
+            """
+            Compute the reward for "rotating the right wrist slightly outward" based on joint angles.
+
+            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
+                               Each trajectory consists of 16 timesteps, and each timestep has 14 joint angles
+                               (7 for the left arm, 7 for the right arm).
+            :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
+            """
+            # Convert trajectory to numpy and unnormalize
+            device = trajectory.device
+            trajectory = trajectory.detach().cpu().numpy()
+            trajectory = trajectory.reshape(-1, 16, 14)
+            trajectory = unnormalize_data(trajectory, stats["action"])
+
+            # Extract right arm trajectory
+            right_trajectory = trajectory[:, :, 7:13]  # Right arm: joints 7 to 13
+
+            # Assuming the right wrist rotation corresponds to the last joint (index 6 of the 7 right arm joints)
+            wrist_joint_index = 5
+            scores = np.zeros(self.sampling_batch_size)
+
+            # Iterate through the batch and compute wrist rotation change
+            for i in range(self.sampling_batch_size):
+                initial_angle = right_trajectory[i, 0, wrist_joint_index]
+                final_angle = right_trajectory[i, -1, wrist_joint_index]
+
+                # Outward rotation is assumed to be a positive change in joint angle
+                scores[i] = final_angle - initial_angle
+
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
+        # </editor-fold>
+
+        # <editor-fold desc="bimanual-carteisan space">
+
         def both_arms_forward_motion(trajectory):
             """
             Compute the reward for "moving both hands forward" based on joint angles.
@@ -1089,12 +1128,12 @@ class DiffusionPolicy:
             scores = -torch.as_tensor(scores, device=device)
             return scores, {}
 
-        def right_wrist_rotate_outward(trajectory):
+        def widen_hands_distance(trajectory):
             """
-            Compute the reward for "rotating the right wrist slightly outward" based on joint angles.
+            Compute the reward for "widen the distance between your hands" based on end-effector positions.
 
             :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
-                               Each trajectory consists of 16 timesteps, and each timestep has 14 joint angles
+                               Each trajectory has 16 timesteps, and each timestep has 14 joint angles
                                (7 for the left arm, 7 for the right arm).
             :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
             """
@@ -1104,25 +1143,113 @@ class DiffusionPolicy:
             trajectory = trajectory.reshape(-1, 16, 14)
             trajectory = unnormalize_data(trajectory, stats["action"])
 
-            # Extract right arm trajectory
-            right_trajectory = trajectory[:, :, 7:13]  # Right arm: joints 7 to 13
+            # Extract left and right arm joint angles
+            left_trajectory = trajectory[:, :, :6]
+            right_trajectory = trajectory[:, :, 7:13]
 
-            # Assuming the right wrist rotation corresponds to the last joint (index 6 of the 7 right arm joints)
-            wrist_joint_index = 5
-            scores = np.zeros(self.sampling_batch_size)
+            # Forward kinematics to get end-effector positions
+            left_ee_position, _ = forward_kinematics(left_trajectory)  # Shape: (batch, 16, 3)
+            right_ee_position, _ = forward_kinematics(right_trajectory)  # Shape: (batch, 16, 3)
 
-            # Iterate through the batch and compute wrist rotation change
-            for i in range(self.sampling_batch_size):
-                initial_angle = right_trajectory[i, 0, wrist_joint_index]
-                final_angle = right_trajectory[i, -1, wrist_joint_index]
+            scores = np.zeros(left_ee_position.shape[0])  # batch size
 
-                # Outward rotation is assumed to be a positive change in joint angle
-                scores[i] = final_angle - initial_angle
+            for i in range(left_ee_position.shape[0]):
+                # Compute initial and final distances between left and right hands
+                initial_dist = np.linalg.norm(left_ee_position[i, 0] - right_ee_position[i, 0])
+                final_dist = np.linalg.norm(left_ee_position[i, -1] - right_ee_position[i, -1])
+
+                # Reward is the increase in distance
+                scores[i] = final_dist - initial_dist
 
             scores = -torch.as_tensor(scores, device=device)
             return scores, {}
 
-        ## Joint space pose-level NBCFs for bimanual trajectory modulation
+        def bring_hands_closer(trajectory):
+            """
+            Compute the reward for "bring both hands closer to each other" based on end-effector positions.
+
+            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
+                               Each trajectory has 16 timesteps, and each timestep has 14 joint angles
+                               (7 for the left arm, 7 for the right arm).
+            :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
+            """
+            # Convert trajectory to numpy and unnormalize
+            device = trajectory.device
+            trajectory = trajectory.detach().cpu().numpy()
+            trajectory = trajectory.reshape(-1, 16, 14)
+            trajectory = unnormalize_data(trajectory, stats["action"])
+
+            # Extract left and right arm joint angles
+            left_trajectory = trajectory[:, :, :6]
+            right_trajectory = trajectory[:, :, 7:13]
+
+            # Forward kinematics to get end-effector positions
+            left_ee_position, _ = forward_kinematics(left_trajectory)  # Shape: (batch, 16, 3)
+            right_ee_position, _ = forward_kinematics(right_trajectory)  # Shape: (batch, 16, 3)
+
+            scores = np.zeros(left_ee_position.shape[0])  # batch size
+
+            for i in range(left_ee_position.shape[0]):
+                # Compute initial and final distances between left and right hands
+                initial_dist = np.linalg.norm(left_ee_position[i, 0] - right_ee_position[i, 0])
+                final_dist = np.linalg.norm(left_ee_position[i, -1] - right_ee_position[i, -1])
+
+                # Reward is the reduction in distance (hands getting closer)
+                scores[i] = initial_dist - final_dist
+
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
+        def lower_both_hands_evenly(trajectory):
+            """
+            Compute the reward for "lower both hands evenly" based on vertical displacement (z-axis)
+            and symmetry between arms.
+
+            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
+                               Each trajectory has 16 timesteps, and each timestep has 14 joint angles
+                               (7 for the left arm, 7 for the right arm).
+            :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
+            """
+            # Convert trajectory to numpy and unnormalize
+            device = trajectory.device
+            trajectory = trajectory.detach().cpu().numpy()
+            trajectory = trajectory.reshape(-1, 16, 14)
+            trajectory = unnormalize_data(trajectory, stats["action"])
+
+            # Extract joint angles for each arm
+            left_trajectory = trajectory[:, :, :7]
+            right_trajectory = trajectory[:, :, 7:]
+
+            # Compute end-effector positions
+            left_ee_position, _ = forward_kinematics(left_trajectory)  # Shape: (batch, 16, 3)
+            right_ee_position, _ = forward_kinematics(right_trajectory)  # Shape: (batch, 16, 3)
+
+            scores = np.zeros(left_ee_position.shape[0])  # batch size
+
+            for i in range(left_ee_position.shape[0]):
+                # Get initial and final z-positions (vertical) of both hands
+                left_z_start = left_ee_position[i, 0, 2]
+                left_z_end = left_ee_position[i, -1, 2]
+                right_z_start = right_ee_position[i, 0, 2]
+                right_z_end = right_ee_position[i, -1, 2]
+
+                # Compute amount lowered
+                left_drop = left_z_start - left_z_end
+                right_drop = right_z_start - right_z_end
+
+                # Compute discrepancy between hands (should be minimal for even lowering)
+                symmetry_penalty = np.abs(left_drop - right_drop)
+
+                # Reward: total lowering minus symmetry penalty
+                lowering_reward = (left_drop + right_drop) - symmetry_penalty
+                scores[i] = lowering_reward
+
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
+        # </editor-fold>
+
+        # <editor-fold desc="bimanual-joint space">
         def lift_the_elbows(trajectory):
             """
             Compute the reward for 'lifting the elbows a bit higher' by using forward kinematics
@@ -1168,7 +1295,50 @@ class DiffusionPolicy:
             scores = -torch.as_tensor(scores, device=device)
             return scores, {}
 
-        return lift_the_elbows
+        def bend_arms_into_holding_pose(trajectory):
+            """
+            Compute the reward for 'bend both arms into a curved holding pose' by evaluating elbow flexion
+            in joint space. A curved holding pose typically involves elbow joints bending toward ~90 degrees.
+
+            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual joint angle trajectories.
+                               Each trajectory contains 16 timesteps, and each timestep has 14 joint angles
+                               (7 for the left arm, 7 for the right arm).
+            :return: Tensor of shape (batch,), reward scores for each trajectory.
+            """
+            # Step 1: Convert to numpy and unnormalize
+            device = trajectory.device
+            trajectory = trajectory.detach().cpu().numpy()
+            trajectory = trajectory.reshape(-1, 16, 14)
+            trajectory = unnormalize_data(trajectory, stats["action"])
+
+            # Step 2: Extract elbow joint angles (assumed to be joint index 2 for both arms)
+            # Modify index if elbow joint is mapped differently in your robot
+            left_elbow_angles = trajectory[:, :, 2]  # Shape: (batch, 16)
+            right_elbow_angles = trajectory[:, :, 9]  # Shape: (batch, 16)
+
+            scores = np.zeros(left_elbow_angles.shape[0])  # batch size
+
+            for i in range(left_elbow_angles.shape[0]):
+                # Use final timestep to evaluate the holding pose
+                left_final = left_elbow_angles[i, -1]
+                right_final = right_elbow_angles[i, -1]
+
+                # Ideal elbow angle for curved holding pose is around 90 degrees ≈ 1.57 rad
+                target_angle = 1.57
+
+                # Compute deviation from desired bend angle
+                left_error = np.abs(left_final - target_angle)
+                right_error = np.abs(right_final - target_angle)
+
+                # Reward is negative of total deviation
+                scores[i] = -(left_error + right_error)
+
+            scores = torch.as_tensor(scores, device=device)
+            return scores, {}
+
+        # </editor-fold>
+
+        return widen_hands_distance
 
 
 
