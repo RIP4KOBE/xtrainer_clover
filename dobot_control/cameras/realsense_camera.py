@@ -32,6 +32,7 @@ class RealSenseCamera(CameraDriver):
 
         config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 90)
         config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 90)
+
         self._pipeline.start(config)
         self._flip = flip
         # print(device_id)
@@ -74,6 +75,14 @@ class RealSenseCamera(CameraDriver):
             depth = depth[:, :, None]
 
         return image, depth
+
+
+    def get_parameters(self):
+        """Get the camera intrinsic and extrinsic parameters."""
+        depth_intr = self._pipeline.get_active_profile().get_stream(rs.stream.depth).as_video_stream_profile().get_intrinsics()
+        color_intr = self._pipeline.get_active_profile().get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+
+        return depth_intr, color_intr
 
 def _debug_read(camera, save_datastream=False):
 

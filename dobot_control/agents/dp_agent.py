@@ -201,6 +201,7 @@ class BimanualDPAgent:
             self.act(example_obs)
 
     def act(self, obs: Dict[str, Any], modulation=False, last_action=None) -> Tuple[np.ndarray, bool]:
+        base_img = obs['base_rgb']
         obs = self.dp.get_observation([obs], load_img=True)
         if "img" in obs:
             obs["img"] = self.dp.eval_transform(obs["img"].squeeze(0))
@@ -228,7 +229,7 @@ class BimanualDPAgent:
                 )
             else:
                 pred = self.dp.modulate(
-                    self.obsque, num_diffusion_iters=self.num_diffusion_iters, traj_origin=last_action,
+                    self.obsque, base_img, num_diffusion_iters=self.num_diffusion_iters, traj_origin=last_action,
                 )
 
             time2 = time.time()

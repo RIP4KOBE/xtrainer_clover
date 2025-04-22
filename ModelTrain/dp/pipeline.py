@@ -425,7 +425,7 @@ class Agent:
         )
         return pred
 
-    def modulate(self, obs_deque: collections.deque, num_diffusion_iters=15, traj_origin=None):
+    def modulate(self, obs_deque: collections.deque, obj_img, num_diffusion_iters=15, traj_origin=None):
         """
         data: dict
             data['image']: torch.tensor (1,5,224,224)
@@ -433,7 +433,7 @@ class Agent:
             data['pos']: torch.tensor (1,24)
         """
         pred = self.policy.run_diffusion_es(
-            self.stats, obs_deque, num_diffusion_iters=num_diffusion_iters, traj_origin=traj_origin, visualize=True
+            self.stats, obs_deque, obj_img, num_diffusion_iters=num_diffusion_iters, traj_origin=traj_origin, visualize=True
         )
         return pred
 
@@ -776,16 +776,16 @@ def boolean_string(s):
 
 
 if __name__ == "__main__":
-    # TODO: better config management
+    # TODO: better configs management
     args = argparse.ArgumentParser()
-    # train config
+    # train configs
     args.add_argument("--batch_size", type=int, default=32)
     args.add_argument("--obs_horizon", type=int, default=1)
     args.add_argument("--action_horizon", type=int, default=8)
     args.add_argument("--pred_horizon", type=int, default=16)
     args.add_argument("--epochs", type=int, default=220)
 
-    # input config
+    # input configs
     args.add_argument("--traj_type", type=str, default="plain")
     args.add_argument("--prefix", type=str, default=None)
     args.add_argument("--save_path", type=str, default=None)
@@ -841,7 +841,7 @@ if __name__ == "__main__":
     args.add_argument("--without_sampling", type=boolean_string, default=False)
     args.add_argument("--binarize_touch", type=boolean_string, default=False)
 
-    # model config
+    # model configs
     args.add_argument("--num_diffusion_iters", type=int, default=100)
     args.add_argument("--wandb_exp_name", type=str, default=None)
     args.add_argument("--load_img", type=boolean_string, default=False)
@@ -852,13 +852,13 @@ if __name__ == "__main__":
     args.add_argument("--memmap_loader_path", type=str, default=None)
     args.add_argument("--compile_train", type=boolean_string, default=False)
 
-    # wandb config
+    # wandb configs
     args.add_argument("--wandb_entity_name", type=str, default=None)
     args.add_argument("--wandb_project_name", type=str, default=None)
 
-    # classifier-free diffusion guidance config
+    # classifier-free diffusion guidance configs
     args.add_argument("--cfg_options", type=str,
-                      default="/home/zhuoli/dobot_xtrainer/config/cfg_options.yaml")
+                      default="/home/zhuoli/dobot_xtrainer/configs/cfg_config.yaml")
 
     args = args.parse_args()
 

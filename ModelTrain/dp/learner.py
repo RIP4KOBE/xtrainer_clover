@@ -16,7 +16,8 @@ from ModelTrain.dp.models import *
 from torch.nn.functional import mse_loss
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
-from utils import visualize_trajectory, forward_kinematics,align_trajs_to_origin, bimanual_coordinator, bimanual_frame_transform
+from utils import forward_kinematics, align_trajs_to_origin, bimanual_coordinator,bimanual_frame_transform
+from vis_utils import visualize_trajectory
 
 
 def normalize_data(data, stats):
@@ -769,7 +770,7 @@ class DiffusionPolicy:
         return mse
 
 
-    def run_diffusion_es(self, stats, obs_deque, num_diffusion_iters=None, constraints=None, traj_origin=None,
+    def run_diffusion_es(self, stats, obs_deque, obj_img, num_diffusion_iters=None, constraints=None, traj_origin=None,
                          use_cem=False, cem_iters=20,
                          num_elites=32,
                          temperature=0.1, visualize=False):
@@ -827,6 +828,18 @@ class DiffusionPolicy:
 
             # alpha = 0.25 # [0.3, 0.7]
             # obs_cond = alpha * obs_cond + (1 - alpha) * torch.randn_like(obs_cond)
+
+            # object-related keypoints extraction
+            # rgb = obj_img
+            # points = cam_obs[self.configs['vlm_camera']]['points']
+            # mask = cam_obs[self.configs['vlm_camera']]['seg']
+            #
+            # keypoints, projected_img = self.keypoint_proposer.get_keypoints(rgb, points, mask)
+            # print(f'{bcolors.HEADER}Got {len(keypoints)} proposed keypoints{bcolors.ENDC}')
+            # if self.visualize:
+            #     self.visualizer.show_img(projected_img)
+            # metadata = {'init_keypoint_positions': keypoints, 'num_keypoints': len(keypoints)}
+
 
             # Diffusion-es parameter initialization
             trunc_step_schedule = np.linspace(5, 1, cem_iters).astype(int)
