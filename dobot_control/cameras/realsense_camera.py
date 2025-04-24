@@ -70,9 +70,14 @@ class RealSenseCamera(CameraDriver):
         # rotate 180 degree's because everything is upside down in order to center the camera
         if self._flip:
             image = cv2.rotate(image, cv2.ROTATE_180)
-            depth = cv2.rotate(depth, cv2.ROTATE_180)[:, :, None]
+            # depth = cv2.rotate(depth, cv2.ROTATE_180)[:, :, None]
+            depth = cv2.rotate(depth, cv2.ROTATE_180)
+
         else:
-            depth = depth[:, :, None]
+            # depth = depth[:, :, None]
+            depth = depth
+
+
 
         return image, depth
 

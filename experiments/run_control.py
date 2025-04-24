@@ -25,10 +25,11 @@ class Args:
     hostname: str = "127.0.0.1"
     show_img: bool = False
     # save_data_path = "/media/zhuoli/5HYSSD/xtrainer/datasets/manidp_experiments/"
-    save_data_path = "/media/zhuoli/5HYSSD/xtrainer/datasets/"
+    save_data_path = "/media/zhuoli/8ECE-77DB/xtrainer/Datasets/DP/"
     project_name = "assistivedressing"
     agent_name = "dp"
     dp_save_png = False
+    handeye_calibration = True
 
 # Thread button: [lock or nor, servo or not, record or not]
 # 0: lock, 1: unlock
@@ -279,15 +280,19 @@ def main(args):
 
     # camera init
     camera_dict = load_ini_data_camera()
-    rs1 = RealSenseCamera(flip=True, device_id=camera_dict["top"])
     rs2 = RealSenseCamera(flip=False, device_id=camera_dict["left"])
     rs3 = RealSenseCamera(flip=True, device_id=camera_dict["right"])
-    thread_cam_top = threading.Thread(target=run_thread_cam, args=(rs1, 0))
     thread_cam_left = threading.Thread(target=run_thread_cam, args=(rs2, 1))
     thread_cam_right = threading.Thread(target=run_thread_cam, args=(rs3, 2))
-    thread_cam_top.start()
     thread_cam_left.start()
     thread_cam_right.start()
+
+    # avoid camera node conflict during hand-eye calibration
+    if not args.handeye_calibration:
+        rs1 = RealSenseCamera(flip=True, device_id=camera_dict["top"])
+        thread_cam_top = threading.Thread(target=run_thread_cam, args=(rs1, 0))
+        thread_cam_top.start()
+
     show_canvas = np.zeros((480, 640*3, 3), dtype=np.uint8)
     time.sleep(2)
     print("camera thread init success...")
@@ -326,7 +331,7 @@ def main(args):
     while 1:
         tic = time.time()
 
-        assert thread_cam_top.is_alive(), "Error: please check the top camera!"
+        # assert thread_cam_top.is_alive(), "Error: please check the top camera!"
         assert thread_cam_left.is_alive(), "Error: please check the left camera!"
         assert thread_cam_right.is_alive(), "Error: please check the right camera!"
         assert not is_falling, "sensor   detection!"

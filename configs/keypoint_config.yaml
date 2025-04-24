@@ -1,7 +1,7 @@
 device: &device 'cuda'
 seed: &seed 0
-bounds_min: &bounds_min [-0.45, -0.75, 0.698]
-bounds_max: &bounds_max [0.10, 0.60, 1.2]
+bounds_min: &bounds_min [-0.3, -0.2, 0.0]
+bounds_max: &bounds_max [0.2, -0.8, 0.6]
 
 keypoint_proposer:
   num_candidates_per_mask: 5

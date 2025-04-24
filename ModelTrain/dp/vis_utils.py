@@ -219,6 +219,12 @@ def filter_points_by_bounds(points, bounds_min, bounds_max, strict=True):
     assert points.shape[1] == 3, "points must be (N, 3)"
     bounds_min = bounds_min.copy()
     bounds_max = bounds_max.copy()
+
+    # print("candidate_keypoints (min):", points.min(axis=0))
+    # print("candidate_keypoints (max):", points.max(axis=0))
+    # print("bounds_min:", bounds_min)
+    # print("bounds_max:", bounds_max)
+
     if not strict:
         bounds_min[:2] = bounds_min[:2] - 0.1 * (bounds_max[:2] - bounds_min[:2])
         bounds_max[:2] = bounds_max[:2] + 0.1 * (bounds_max[:2] - bounds_min[:2])
@@ -251,47 +257,118 @@ def batch_transform_points(points, transforms):
         transformed_points[i] = np.dot(points, R.T) + pos
     return transformed_points
 
+# def pixel_to_3d_points(depth_image, intrinsics, extrinsics):
+#     # Get the shape of the depth image
+#     H, W = depth_image.shape
+#
+#     # Create a grid of (x, y) coordinates corresponding to each pixel in the image
+#     i, j = np.meshgrid(np.arange(W), np.arange(H), indexing='xy')
+#
+#     # Unpack the intrinsic parameters
+#     fx, fy = intrinsics[0, 0], intrinsics[1, 1]
+#     cx, cy = intrinsics[0, 2], intrinsics[1, 2]
+#
+#     # Convert pixel coordinates to normalized camera coordinates
+#     z = depth_image
+#     x = (i - cx) * z / fx
+#     y = (j - cy) * z / fy
+#
+#     # Stack the coordinates to form (H, W, 3)
+#     camera_coordinates = np.stack((x, y, z), axis=-1)
+#
+#     # Reshape to (H*W, 3) for matrix multiplication
+#     camera_coordinates = camera_coordinates.reshape(-1, 3)
+#
+#     # Convert to homogeneous coordinates (H*W, 4)
+#     camera_coordinates_homogeneous = np.hstack((camera_coordinates, np.ones((camera_coordinates.shape[0], 1))))
+#
+#     # additional conversion to og convention
+#     T_mod = np.array([[1., 0., 0., 0., ],
+#               [0., -1., 0., 0.,],
+#               [0., 0., -1., 0.,],
+#               [0., 0., 0., 1.,]])
+#     camera_coordinates_homogeneous = camera_coordinates_homogeneous @ T_mod
+#
+#     # Apply extrinsics to get world coordinates
+#     # world_coordinates_homogeneous = camera_coordinates_homogeneous @ extrinsics.T
+#     world_coordinates_homogeneous = T.pose_inv(extrinsics) @ (camera_coordinates_homogeneous.T)
+#     world_coordinates_homogeneous = world_coordinates_homogeneous.T
+#
+#     # Convert back to non-homogeneous coordinates
+#     world_coordinates = world_coordinates_homogeneous[:, :3] / world_coordinates_homogeneous[:, 3, np.newaxis]
+#
+#     # Reshape back to (H, W, 3)
+#     world_coordinates = world_coordinates.reshape(H, W, 3)
+#
+#     return world_coordinates
+
 def pixel_to_3d_points(depth_image, intrinsics, extrinsics):
-    # Get the shape of the depth image
+    """
+    Convert a depth image to 3D world coordinates using camera intrinsics and extrinsics.
+
+    Args:
+        depth_image (np.ndarray): Depth image of shape (H, W) or (H, W, 1), dtype can be uint16 (mm) or float32 (m).
+        intrinsics (np.ndarray): 3x3 intrinsic matrix.
+        extrinsics (np.ndarray): 4x4 extrinsic matrix (camera-to-world transform).
+
+    Returns:
+        np.ndarray: 3D points of shape (H, W, 3), in world coordinates.
+    """
+    # Ensure depth image is 2D
+    if depth_image.ndim == 3 and depth_image.shape[2] == 1:
+        depth_image = depth_image[:, :, 0]
+    elif depth_image.ndim != 2:
+        raise ValueError(f"Expected depth_image to be 2D or (H, W, 1), but got shape: {depth_image.shape}")
+
+    np.savetxt("depth_values.txt", depth_image, fmt="%.3f")
+    print("depth_image type:", depth_image.dtype)
+
+
+    # Convert depth to meters
+    if depth_image.dtype == np.uint16:
+        invalid_mask = (depth_image == 0) | (depth_image == 65535)
+        depth_image = depth_image.astype(np.float32) / 1000.0
+        depth_image[invalid_mask] = 0.0  # 标记为无效点
+
+    print("depth_image min, max:", depth_image.min(), depth_image.max())
     H, W = depth_image.shape
 
-    # Create a grid of (x, y) coordinates corresponding to each pixel in the image
+    # Create pixel coordinate grid
     i, j = np.meshgrid(np.arange(W), np.arange(H), indexing='xy')
 
-    # Unpack the intrinsic parameters
-    fx, fy = intrinsics[0, 0], intrinsics[1, 1]
-    cx, cy = intrinsics[0, 2], intrinsics[1, 2]
+    # Unpack intrinsics
+    fx, fy = intrinsics.fx, intrinsics.fy
+    cx, cy = intrinsics.ppx, intrinsics.ppy
+    print("fx, fy, cx, cy:", fx, fy, cx, cy)
 
-    # Convert pixel coordinates to normalized camera coordinates
+    # Project to camera coordinates
     z = depth_image
     x = (i - cx) * z / fx
     y = (j - cy) * z / fy
 
-    # Stack the coordinates to form (H, W, 3)
-    camera_coordinates = np.stack((x, y, z), axis=-1)
+    print("x, y, z:", x[0, 0], y[0, 0], z[0, 0])
 
-    # Reshape to (H*W, 3) for matrix multiplication
-    camera_coordinates = camera_coordinates.reshape(-1, 3)
+    # Stack into (H*W, 3)
+    camera_coordinates = np.stack((x, y, z), axis=-1).reshape(-1, 3)
 
-    # Convert to homogeneous coordinates (H*W, 4)
+    # Homogeneous coordinates
     camera_coordinates_homogeneous = np.hstack((camera_coordinates, np.ones((camera_coordinates.shape[0], 1))))
 
-    # additional conversion to og convention
-    T_mod = np.array([[1., 0., 0., 0., ],
-              [0., -1., 0., 0.,],
-              [0., 0., -1., 0.,],
-              [0., 0., 0., 1.,]])
+    # Convert to OpenGL convention
+    T_mod = np.array([
+        [1., 0.,  0., 0.],
+        [0., -1., 0., 0.],
+        [0., 0., -1., 0.],
+        [0., 0.,  0., 1.]
+    ])
     camera_coordinates_homogeneous = camera_coordinates_homogeneous @ T_mod
 
-    # Apply extrinsics to get world coordinates
-    # world_coordinates_homogeneous = camera_coordinates_homogeneous @ extrinsics.T
-    world_coordinates_homogeneous = T.pose_inv(extrinsics) @ (camera_coordinates_homogeneous.T)
+    # Transform to world coordinates
+    world_coordinates_homogeneous = T.pose_inv(extrinsics) @ camera_coordinates_homogeneous.T
     world_coordinates_homogeneous = world_coordinates_homogeneous.T
 
-    # Convert back to non-homogeneous coordinates
+    # Convert to non-homogeneous
     world_coordinates = world_coordinates_homogeneous[:, :3] / world_coordinates_homogeneous[:, 3, np.newaxis]
 
-    # Reshape back to (H, W, 3)
-    world_coordinates = world_coordinates.reshape(H, W, 3)
-
-    return world_coordinates
+    # Reshape to (H, W, 3)
+    return world_coordinates.reshape(H, W, 3)
