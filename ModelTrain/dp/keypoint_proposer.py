@@ -294,7 +294,6 @@ if __name__ == "__main__":
     cv2.waitKey(1000)
     cv2.destroyAllWindows()
 
-
     # predictor = SamPredictor(build_sam(checkpoint="checkpoints/sam_vit_b_01ec64.pth"))
     # predictor.set_image(base_rgb)
     # masks, _, _ = predictor.predict( < input_prompts >)
