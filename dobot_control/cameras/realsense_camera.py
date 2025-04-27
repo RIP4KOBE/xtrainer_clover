@@ -30,8 +30,8 @@ class RealSenseCamera(CameraDriver):
         config = rs.config()
         config.enable_device(device_id)
 
-        config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 90)
-        config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 90)
+        config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+        config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
 
         self._pipeline.start(config)
         self._flip = flip
@@ -40,8 +40,8 @@ class RealSenseCamera(CameraDriver):
             self.read()
 
     def read(
-        self,
-        img_size: Optional[Tuple[int, int]] = None,  # farthest: float = 0.12
+            self,
+            img_size: Optional[Tuple[int, int]] = None,  # farthest: float = 0.12
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Read a frame from the camera.
 
@@ -70,21 +70,50 @@ class RealSenseCamera(CameraDriver):
         # rotate 180 degree's because everything is upside down in order to center the camera
         if self._flip:
             image = cv2.rotate(image, cv2.ROTATE_180)
-            # depth = cv2.rotate(depth, cv2.ROTATE_180)[:, :, None]
-            depth = cv2.rotate(depth, cv2.ROTATE_180)
-
+            depth = cv2.rotate(depth, cv2.ROTATE_180)[:, :, None]
         else:
-            # depth = depth[:, :, None]
-            depth = depth
-
-
+            depth = depth[:, :, None]
 
         return image, depth
+
+    def read_alignment(
+        self,
+        img_size: Optional[Tuple[int, int]] = None,  # farthest: float = 0.12
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Read a frame from the camera.
+
+        Args:
+            img_size: The size of the image to return. If None, the original size is returned.
+            farthest: The farthest distance to map to 255.
+
+        Returns:
+            np.ndarray: The color image, shape=(H, W, 3)
+            np.ndarray: The depth image, shape=(H, W, 1)
+        """
+
+        frames = self._pipeline.wait_for_frames()
+
+        # align the depth frame to the color frame under camera_color_optical_frame
+        align = rs.align(rs.stream.color)
+        frames = align.process(frames)
+
+        color_frame = frames.get_color_frame()
+        color_image = np.asanyarray(color_frame.get_data())
+        color_image = color_image[:, :, ::-1]
+        aligned_depth_frame = frames.get_depth_frame()
+        aligned_depth_image = np.asanyarray(aligned_depth_frame.get_data())
+
+        depth_intrinsics = aligned_depth_frame.profile.as_video_stream_profile().intrinsics
+        color_intrinsics = color_frame.profile.as_video_stream_profile().intrinsics
+
+
+        return color_image, aligned_depth_image, color_intrinsics, depth_intrinsics
 
 
     def get_parameters(self):
         """Get the camera intrinsic and extrinsic parameters."""
-        depth_intr = self._pipeline.get_active_profile().get_stream(rs.stream.depth).as_video_stream_profile().get_intrinsics()
+        # depth_intr = self._pipeline.get_active_profile().get_stream(rs.stream.depth).as_video_stream_profile().get_intrinsics()
+        depth_intr = self._pipeline.wait_for_frames().get_depth_frame().profile.as_video_stream_profile().intrinsics
         color_intr = self._pipeline.get_active_profile().get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
 
         return depth_intr, color_intr

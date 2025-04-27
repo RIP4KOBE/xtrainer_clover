@@ -1,7 +1,7 @@
 device: &device 'cuda'
 seed: &seed 0
-bounds_min: &bounds_min [-0.3, -0.2, 0.0]
-bounds_max: &bounds_max [0.2, -0.8, 0.6]
+bounds_min: &bounds_min [-0.8, -1, 0]
+bounds_max: &bounds_max [0.3, -0.3, 0.3]
 
 keypoint_proposer:
   num_candidates_per_mask: 5
@@ -11,3 +11,5 @@ keypoint_proposer:
   bounds_min: *bounds_min
   bounds_max: *bounds_max
   seed: *seed
+  handeye_translation: [-0.4615224, -0.4428805, 1.06529779]
+  handeye_quaternion: [0.86386745, -0.0818508, -0.49183171, 0.0716590]  # [x, y, z, w]

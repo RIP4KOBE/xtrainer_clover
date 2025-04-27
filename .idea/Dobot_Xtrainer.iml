@@ -865,6 +865,10 @@
     <orderEntry type="library" name="workspace" level="project" />
     <orderEntry type="library" name="ROS" level="project" />
     <orderEntry type="library" name="workspace" level="project" />
+    <orderEntry type="library" name="workspace" level="project" />
+    <orderEntry type="library" name="ROS" level="project" />
+    <orderEntry type="library" name="workspace" level="project" />
+    <orderEntry type="library" name="ROS" level="project" />
   </component>
   <component name="PyDocumentationSettings">
     <option name="format" value="PLAIN" />

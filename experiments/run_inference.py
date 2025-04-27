@@ -17,10 +17,13 @@ from dobot_control.env import RobotEnv
 from dobot_control.robots.robot_node import ZMQClientRobot
 from dobot_control.cameras.realsense_camera import RealSenseCamera
 from dobot_control.agents.dp_agent import BimanualDPAgent
+from ModelTrain.dp.utils import get_config
+from ModelTrain.dp.keypoint_proposer import KeypointProposer
+
 
 from scripts.manipulate_utils import load_ini_data_camera
 
-from ModelTrain.module.model_module import Imitate_Model
+# from ModelTrain.module.model_module import Imitate_Model
 from ModelTrain.dp.pipeline import Agent as DPAgent
 
 @dataclass
@@ -31,10 +34,11 @@ class Args:
     agent_name: str = "dp"
     act_ckpt_path: str = "./ckpt/act/tidying_up_bowls_abcefg_mix_0925"
     # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_cfg_plate_wipping_UnconditionalTraining_20250408/last.ckpt"
-    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/manidp_plate_wipping_b_20250207/last.ckpt"
+    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_bimanual_handover_20250425/last.ckpt"
     dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_cfg_plate_wipping_20250402/last.ckpt"
     dp_model = None
     act_model = None
+    obj_correction = False
 
 
 image_left,image_right,image_top,thread_run=None,None,None,None
@@ -88,9 +92,6 @@ def main(args):
     rs1 = RealSenseCamera(flip=False, device_id=camera_dict["left"])
     rs2 = RealSenseCamera(flip=True, device_id=camera_dict["right"])
     rs3 = RealSenseCamera(flip=True, device_id=camera_dict["top"])
-    # rs1 = RealSenseCamera(flip=False, device_id="130322270390")
-    # rs2 = RealSenseCamera(flip=True, device_id="130322272313")
-    # rs3 = RealSenseCamera(flip=True, device_id="130322272737")
     thread_cam_left = threading.Thread(target=run_thread_cam, args=(rs1, 0))
     thread_cam_right = threading.Thread(target=run_thread_cam, args=(rs2, 1))
     thread_cam_top = threading.Thread(target=run_thread_cam, args=(rs3, 2))
@@ -100,6 +101,12 @@ def main(args):
     show_canvas = np.zeros((480, 640 * 3, 3), dtype=np.uint8)
     time.sleep(2)
     print("camera thread init success...")
+
+   # get object keypoints if needed
+    if args.obj_correction:
+       keypoint_config = get_config(config_path="/home/zhuoli/xtrainer_clover/configs/keypoint_config.yaml")
+       keypoint_proposer = KeypointProposer(keypoint_config['keypoint_proposer'])
+       keypoints = keypoint_proposer.run(visualize_projection=True)
 
    # robot init
     robot_client = ZMQClientRobot(port=args.robot_port, host=args.hostname)

@@ -302,7 +302,7 @@ def batch_transform_points(points, transforms):
 #
 #     return world_coordinates
 
-def pixel_to_3d_points(depth_image, intrinsics, extrinsics):
+def pixel_to_world_points(depth_image, intrinsics, extrinsics):
     """
     Convert a depth image to 3D world coordinates using camera intrinsics and extrinsics.
 
@@ -314,39 +314,34 @@ def pixel_to_3d_points(depth_image, intrinsics, extrinsics):
     Returns:
         np.ndarray: 3D points of shape (H, W, 3), in world coordinates.
     """
-    # Ensure depth image is 2D
-    if depth_image.ndim == 3 and depth_image.shape[2] == 1:
-        depth_image = depth_image[:, :, 0]
-    elif depth_image.ndim != 2:
-        raise ValueError(f"Expected depth_image to be 2D or (H, W, 1), but got shape: {depth_image.shape}")
-
-    np.savetxt("depth_values.txt", depth_image, fmt="%.3f")
-    print("depth_image type:", depth_image.dtype)
+    # # Ensure depth image is 2D
+    # if depth_image.ndim == 3 and depth_image.shape[2] == 1:
+    #     depth_image = depth_image[:, :, 0]
+    # elif depth_image.ndim != 2:
+    #     raise ValueError(f"Expected depth_image to be 2D or (H, W, 1), but got shape: {depth_image.shape}")
+    #
+    # np.savetxt("depth_values.txt", depth_image, fmt="%.3f")
+    # print("depth_image type:", depth_image.dtype)
 
 
     # Convert depth to meters
     if depth_image.dtype == np.uint16:
-        invalid_mask = (depth_image == 0) | (depth_image == 65535)
         depth_image = depth_image.astype(np.float32) / 1000.0
-        depth_image[invalid_mask] = 0.0  # 标记为无效点
 
-    print("depth_image min, max:", depth_image.min(), depth_image.max())
     H, W = depth_image.shape
 
     # Create pixel coordinate grid
     i, j = np.meshgrid(np.arange(W), np.arange(H), indexing='xy')
+    # print("i, j shape:", i.shape, j.shape)
 
     # Unpack intrinsics
     fx, fy = intrinsics.fx, intrinsics.fy
     cx, cy = intrinsics.ppx, intrinsics.ppy
-    print("fx, fy, cx, cy:", fx, fy, cx, cy)
 
     # Project to camera coordinates
     z = depth_image
     x = (i - cx) * z / fx
     y = (j - cy) * z / fy
-
-    print("x, y, z:", x[0, 0], y[0, 0], z[0, 0])
 
     # Stack into (H*W, 3)
     camera_coordinates = np.stack((x, y, z), axis=-1).reshape(-1, 3)
@@ -354,17 +349,8 @@ def pixel_to_3d_points(depth_image, intrinsics, extrinsics):
     # Homogeneous coordinates
     camera_coordinates_homogeneous = np.hstack((camera_coordinates, np.ones((camera_coordinates.shape[0], 1))))
 
-    # Convert to OpenGL convention
-    T_mod = np.array([
-        [1., 0.,  0., 0.],
-        [0., -1., 0., 0.],
-        [0., 0., -1., 0.],
-        [0., 0.,  0., 1.]
-    ])
-    camera_coordinates_homogeneous = camera_coordinates_homogeneous @ T_mod
-
     # Transform to world coordinates
-    world_coordinates_homogeneous = T.pose_inv(extrinsics) @ camera_coordinates_homogeneous.T
+    world_coordinates_homogeneous = extrinsics @ camera_coordinates_homogeneous.T
     world_coordinates_homogeneous = world_coordinates_homogeneous.T
 
     # Convert to non-homogeneous
@@ -372,3 +358,195 @@ def pixel_to_3d_points(depth_image, intrinsics, extrinsics):
 
     # Reshape to (H, W, 3)
     return world_coordinates.reshape(H, W, 3)
+
+def pixel_to_camera_points(depth_image, intrinsics):
+    """
+    Convert a depth image to 3D world coordinates using camera intrinsics and extrinsics.
+
+    Args:
+        depth_image (np.ndarray): Depth image of shape (H, W) or (H, W, 1), dtype can be uint16 (mm) or float32 (m).
+        intrinsics (np.ndarray): 3x3 intrinsic matrix.
+        extrinsics (np.ndarray): 4x4 extrinsic matrix (camera-to-world transform).
+
+    Returns:
+        np.ndarray: 3D points of shape (H, W, 3), in world coordinates.
+    """
+    # # Ensure depth image is 2D
+    # if depth_image.ndim == 3 and depth_image.shape[2] == 1:
+    #     depth_image = depth_image[:, :, 0]
+    # elif depth_image.ndim != 2:
+    #     raise ValueError(f"Expected depth_image to be 2D or (H, W, 1), but got shape: {depth_image.shape}")
+    #
+    # np.savetxt("depth_values.txt", depth_image, fmt="%.3f")
+    # print("depth_image type:", depth_image.dtype)
+
+
+    # Convert depth to meters
+    if depth_image.dtype == np.uint16:
+        depth_image = depth_image.astype(np.float32) / 1000.0
+        print("depth_image converted to meters")
+
+    print("depth_image min, max:", depth_image.min(), depth_image.max())
+    print("depth_image shape:", depth_image.shape)
+    H, W = depth_image.shape
+
+    # Create pixel coordinate grid
+    i, j = np.meshgrid(np.arange(W), np.arange(H), indexing='xy')
+    # print("i, j shape:", i.shape, j.shape)
+
+    # Unpack intrinsics
+    fx, fy = intrinsics.fx, intrinsics.fy
+    cx, cy = intrinsics.ppx, intrinsics.ppy
+
+    # Project to camera coordinates
+    z = depth_image
+    x = (i - cx) * z / fx
+    y = (j - cy) * z / fy
+
+    # Stack into (H, W, 3)
+    camera_coordinates = np.stack((x, y, z), axis=-1)
+
+    return camera_coordinates
+
+
+
+def compute_world_coordinates_from_depth(depth_image, intrinsics, extrinsics):
+    """
+    根据深度图、相机内参、外参矩阵，计算每个像素对应的世界坐标 (X, Y, Z)。
+
+    Args:
+        depth_image: (H, W) numpy数组，单位米
+        intrinsics: 相机内参对象，具有 fx, fy, ppx, ppy 属性
+        extrinsics: (4,4) 外参矩阵，numpy数组
+
+    Returns:
+        world_coordinates: (H, W, 3) numpy数组，世界坐标
+    """
+
+    print("depth_image min, max:", depth_image.min(), depth_image.max())
+    H, W = depth_image.shape
+
+    # Create pixel coordinate grid
+    i, j = np.meshgrid(np.arange(W), np.arange(H), indexing='xy')
+
+    # 相机内参矩阵
+    camera_intrinsics_matrix = np.array([
+        [intrinsics.fx, 0, intrinsics.ppx],
+        [0, intrinsics.fy, intrinsics.ppy],
+        [0, 0, 1]
+    ], dtype=np.float32)
+
+    # 计算内参矩阵的逆
+    try:
+        camera_intrinsics_inv = np.linalg.inv(camera_intrinsics_matrix)
+    except np.linalg.LinAlgError as e:
+        print("Error inverting camera intrinsics:", e)
+        return None
+
+    # 深度值
+    z = depth_image
+
+    # 构造 pixel_vector (u*z, v*z, z)
+    pixel_x = i * z
+    pixel_y = j * z
+    pixel_z = z
+
+    # 堆叠成 (H*W, 3)
+    pixel_vectors = np.stack((pixel_x, pixel_y, pixel_z), axis=-1).reshape(-1, 3)  # (N, 3)
+
+    # 转置成 (3, N) 以方便矩阵乘法
+    pixel_vectors = pixel_vectors.T  # (3, N)
+
+    # 批量乘以 camera_intrinsics_inv，得到相机坐标
+    camera_coordinates = camera_intrinsics_inv @ pixel_vectors  # (3, N)
+    camera_coordinates = camera_coordinates.T  # (N, 3)
+
+    # ------- 开始外参变换到世界坐标系 -------- #
+
+    # 加齐次坐标 (N, 4)
+    camera_coordinates_homogeneous = np.hstack((
+        camera_coordinates,
+        np.ones((camera_coordinates.shape[0], 1))
+    ))  # (N, 4)
+
+    # 乘以外参矩阵 (extrinsics)
+    world_coordinates_homogeneous = (extrinsics @ camera_coordinates_homogeneous.T).T  # (N, 4)
+
+    # 从齐次坐标变回普通坐标
+    world_coordinates = world_coordinates_homogeneous[:, :3] / world_coordinates_homogeneous[:, 3:4]
+
+    # Reshape成 (H, W, 3)
+    world_coordinates = world_coordinates.reshape(H, W, 3)
+
+    return world_coordinates
+
+def depth_to_pointcloud(depth_image, intrinsic, extrinsic=None):
+    """
+    Convert depth image to point cloud and optionally transform to base frame.
+
+    Args:
+        depth_image (np.ndarray): Depth image (H, W)
+        intrinsic (rs.intrinsics or o3d.camera.PinholeCameraIntrinsic): Camera intrinsics
+        extrinsic (np.ndarray or None): 4x4 transformation matrix from camera to base frame
+
+    Returns:
+        o3d.geometry.PointCloud: The point cloud in base frame if extrinsic is given, else in camera frame
+    """
+    # Create Open3D depth image
+    o3d_depth = o3d.geometry.Image(depth_image.astype(np.uint16))
+
+    # Camera intrinsics
+    fx, fy, cx, cy = intrinsic.fx, intrinsic.fy, intrinsic.ppx, intrinsic.ppy
+    width, height = depth_image.shape[1], depth_image.shape[0]
+
+    o3d_intrinsic = o3d.camera.PinholeCameraIntrinsic(
+        width=width,
+        height=height,
+        fx=fx, fy=fy,
+        cx=cx, cy=cy
+    )
+
+    # Create point cloud from depth
+    pcd = o3d.geometry.PointCloud.create_from_depth_image(
+        o3d_depth,
+        o3d_intrinsic,
+        depth_scale=1000.0,  # if your depth is in mm
+        depth_trunc=1000,     # max depth considered (in meters)
+        stride=1
+    )
+
+    # Transform to robot base frame if extrinsics provided
+    if extrinsic is not None:
+        pcd.transform(extrinsic)  # Applies 4x4 matrix
+
+    return pcd
+
+
+def visualize_and_pick_point(points: np.ndarray, base_rgb: np.ndarray) -> None:
+    assert points.ndim == 3 or (points.ndim == 2 and points.shape[1] == 3), "points必须是(H,W,3)或(N,3)"
+    assert base_rgb.ndim == 3 and base_rgb.shape[2] == 3, "base_rgb必须是(H,W,3)"
+
+    if points.ndim == 3:
+        points = points.reshape(-1, 3)
+        # print("points shape for visualization:", points.shape)
+    rgb = base_rgb.reshape(-1, 3).astype(np.float32) / 255.0
+
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+    pcd.colors = o3d.utility.Vector3dVector(rgb)
+
+    frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2, origin=[0, 0, 0])
+
+    # 初始化窗口
+    vis = o3d.visualization.Visualizer()
+    vis.create_window(window_name="View Points with Frame", width=1600, height=900, left=100, top=100)
+
+    vis.add_geometry(pcd)
+    vis.add_geometry(frame)
+
+    print("按 [Q] 键退出查看")
+
+    vis.run()
+    vis.destroy_window()
+
+    return None

@@ -3,6 +3,8 @@ import copy
 import os
 import time
 import yaml
+import json
+
 
 import numpy as np
 import torch
@@ -16,8 +18,9 @@ from ModelTrain.dp.models import *
 from torch.nn.functional import mse_loss
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
-from utils import forward_kinematics, align_trajs_to_origin, bimanual_coordinator,bimanual_frame_transform
+from utils import forward_kinematics, align_trajs_to_origin, bimanual_coordinator,bimanual_frame_transform, get_config
 from vis_utils import visualize_trajectory
+from keypoint_proposer import KeypointProposer
 
 
 def normalize_data(data, stats):
@@ -817,7 +820,6 @@ class DiffusionPolicy:
             obs_features = torch.cat(features, dim=-1)
             obs_cond = obs_features.flatten(start_dim=1)
             obs_cond = obs_cond.repeat(self.sampling_batch_size, 1)
-
             # Add Gaussian noise to obs condition to enhance trajectory diversity
             # obs_noise_level = 1.0
             # obs_cond = obs_cond + obs_noise_level * torch.randn_like(obs_cond)
@@ -830,21 +832,17 @@ class DiffusionPolicy:
             # obs_cond = alpha * obs_cond + (1 - alpha) * torch.randn_like(obs_cond)
 
             # object-related keypoints extraction
-            # rgb = obj_img
-            # points = cam_obs[self.configs['vlm_camera']]['points']
-            # mask = cam_obs[self.configs['vlm_camera']]['seg']
-            #
-            # keypoints, projected_img = self.keypoint_proposer.get_keypoints(rgb, points, mask)
-            # print(f'{bcolors.HEADER}Got {len(keypoints)} proposed keypoints{bcolors.ENDC}')
-            # if self.visualize:
-            #     self.visualizer.show_img(projected_img)
-            # metadata = {'init_keypoint_positions': keypoints, 'num_keypoints': len(keypoints)}
 
+            # get keypoints
+
+            # get object-related keypoints
+            # keypoint_config = get_config(config_path="/home/zhuoli/xtrainer_clover/configs/keypoint_config.yaml")
+            # keypoint_proposer = KeypointProposer(keypoint_config['keypoint_proposer'])
+            # self.keypoints = keypoint_proposer.run(visualize_projection=True)
 
             # Diffusion-es parameter initialization
             trunc_step_schedule = np.linspace(5, 1, cem_iters).astype(int)
             noise_scale = 0.1
-
 
             noisy_action = torch.randn(
                 (self.sampling_batch_size, self.pred_horizon, self.action_dim), device=self.device
@@ -921,7 +919,7 @@ class DiffusionPolicy:
 
         # schedule the executed trajectory
         best_trajectory = bimanual_coordinator(
-            mode="bimanual",
+            mode="left",
             traj_origin=traj_origin,
             best_trajectory=best_trajectory
         )
@@ -997,11 +995,25 @@ class DiffusionPolicy:
 
     def generate_constraints(self, stats):
         """
-        Each constraint is a function that maps an bimanual trajectory to some scalar cost to be minimized.
+        Each constraint is a non-differentiable black-box cost function that maps bimanual trajectory to some scalar cost to be minimized.
         """
-        # NBCFs for bimanual trajectory modulation
+        keypoints_path = '/home/zhuoli/xtrainer_clover/configs/metadata.json'
+        with open(keypoints_path, 'r') as f:
+            data = json.load(f)
+        keypoints_list = data['init_keypoint_positions']
+        keypoints = np.array(keypoints_list)
+        # print("keypoints for NBCFs", keypoints)# Shape: (5, 3)
 
-        # <editor-fold desc="single arm-cartesian space">
+        # <editor-fold desc="utils">
+        def unnormalize_traj(trajectory):
+            device = trajectory.device
+            trajectory = trajectory.detach().cpu().numpy()
+            trajectory = trajectory.reshape(-1, 16, 14)
+            trajectory = unnormalize_data(trajectory, stats["action"])
+            return trajectory
+        # </editor-fold>
+
+        # <editor-fold desc="single-arm cartesian NBCFs">
         def left_arm_height_upward(trajectory):
             """
             Compute the reward for "raising the left arm slightly" based on joint angles.
@@ -1098,7 +1110,7 @@ class DiffusionPolicy:
 
         # </editor-fold>
 
-        # <editor-fold desc="bimanual-carteisan space">
+        # <editor-fold desc="bimanual carteisan NBCFs">
 
         def both_arms_forward_motion(trajectory):
             """
@@ -1233,7 +1245,7 @@ class DiffusionPolicy:
 
         # </editor-fold>
 
-        # <editor-fold desc="bimanual-joint space">
+        # <editor-fold desc="bimanual joint-space NBCFs">
         def lift_the_elbows(trajectory):
             """
             Compute the reward for 'lifting the elbows a bit higher' by using forward kinematics
@@ -1322,7 +1334,39 @@ class DiffusionPolicy:
 
         # </editor-fold>
 
-        return lift_the_elbows
+        # <editor-fold desc="object-related NBCFs">
+        def avoid_left_collision(trajectory):
+            """
+            Compute the reward for "watching out for the vase on the left hand" by maintaining a safe distance.
+
+            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
+                               Each trajectory consists of 16 timesteps, and each timestep has 14 joint angles
+                               (7 for the left arm, 7 for the right arm).
+            :param vase_position: Numpy array of shape (3,), the fixed world coordinates of the vase.
+            :param safe_distance: Minimum allowable distance to the vase to avoid collision.
+            :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
+            """
+            device = trajectory.device
+            trajectory = trajectory.detach().cpu().numpy()
+            trajectory = trajectory.reshape(-1, 16, 14)
+            trajectory = unnormalize_data(trajectory, stats["action"])
+            left_trajectory = trajectory[:, :, :6]
+
+            # Extract predicted left arm end-effector positions
+            ee_positions, _ = forward_kinematics(left_trajectory)  # Shape: (batch, 16, 3)
+            scores = np.zeros(trajectory.shape[0])
+
+            for i in range(trajectory.shape[0]):
+                distance = np.linalg.norm(ee_positions[i] - keypoints[5], axis=1)
+                mean_distance = np.mean(distance)
+                scores[i] = mean_distance
+
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
+        # </editor-fold>
+
+        return avoid_left_collision
 
 
 
