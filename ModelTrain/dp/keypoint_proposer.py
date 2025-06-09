@@ -151,7 +151,6 @@ class KeypointProposer:
                 print(f"Skipping mask {rigid_group_id}: too few pixels")
                 continue
 
-
             # consider only foreground features
             obj_features_flat = features_flat[binary_mask.reshape(-1)]
             feature_pixels = np.argwhere(binary_mask)

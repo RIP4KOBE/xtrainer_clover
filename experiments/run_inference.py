@@ -24,7 +24,7 @@ from ModelTrain.dp.keypoint_proposer import KeypointProposer
 from scripts.manipulate_utils import load_ini_data_camera
 
 # from ModelTrain.module.model_module import Imitate_Model
-from ModelTrain.dp.pipeline import Agent as DPAgent
+from ModelTrain.dp.train_dp import Agent as DPAgent
 
 @dataclass
 class Args:

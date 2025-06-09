@@ -8,7 +8,7 @@ import numpy as np
 import quaternion
 import torch
 
-from ModelTrain.dp.pipeline import Agent as DPAgent
+from ModelTrain.dp.train_dp import Agent as DPAgent
 
 
 def from_numpy(data, device, unsqueeze=True):

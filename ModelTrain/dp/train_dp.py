@@ -21,7 +21,7 @@ from ModelTrain.dp.models import GaussianNoise, ImageEncoder, StateEncoder
 from torch import nn
 from torch.nn import ModuleList
 from torchvision import transforms
-from ModelTrain.dp.utils import WandBLogger, generate_random_string, get_eef_delta, save_args
+from utils import WandBLogger, generate_random_string, get_eef_delta, save_args
 
 LEFT_XTRAINER_IDX = list(range(0, 6))
 RIGHT_XTRAINER_IDX = list(range(12, 18))
@@ -29,7 +29,7 @@ RIGHT_XTRAINER_IDX = list(range(12, 18))
 # RIGHT_HAND_IDX = list(range(18, 24))
 # GRIPPER_IDX = LEFT_HAND_IDX + RIGHT_HAND_IDX
 RT_DIM = {
-    "eef": 14,
+    "eef": 12,
     "hand_pos": 2,
     "pos": 14,
     "touch": 60,
@@ -40,7 +40,7 @@ TEST_INPUT = {
     "ee_pos_quat": torch.zeros(14),
     "base_rgb": torch.zeros(3, 480, 640, 3),
     "base_depth": torch.zeros(3, 480, 640),
-    "control": torch.zeros(28),
+    "control": torch.zeros(14),
     "touch": torch.zeros(60),
     "hand_pos": torch.zeros(2),
     # "hand_pos": torch.zeros(12),
@@ -88,9 +88,7 @@ class Agent:
         img_masking_prob=0.0,
         img_patch_size=16,
         compile_train=False,
-        cfg_options=None,
     ):
-        self.cfg_options = cfg_options
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.pred_horizon = pred_horizon
         self.obs_horizon = obs_horizon
@@ -425,18 +423,6 @@ class Agent:
         )
         return pred
 
-    def modulate(self, obs_deque: collections.deque, obj_img, num_diffusion_iters=15, traj_origin=None):
-        """
-        data: dict
-            data['image']: torch.tensor (1,5,224,224)
-            data['touch']: torch.tensor (1,6)
-            data['pos']: torch.tensor (1,24)
-        """
-        pred = self.policy.run_diffusion_es(
-            self.stats, obs_deque, obj_img, num_diffusion_iters=num_diffusion_iters, traj_origin=traj_origin, visualize=True
-        )
-        return pred
-
     def _get_init_train_data(self, total_data_points, memmap_loader_path=""):
         init_data = {}
         for rt in self.representation_type + ["action"]:
@@ -622,18 +608,7 @@ class Agent:
                 train_loader.dataset.__getitem__
             )
 
-        # self.policy.train(
-        #     epochs,
-        #     train_loader,
-        #     save_path=save_path,
-        #     eval_data=eval_data,
-        #     eval_freq=eval_freq,
-        #     save_freq=save_freq,
-        #     wandb_logger=wandb_logger,
-        # )
-
-        # DP training with classifier-free guidance
-        self.policy.train_cfg(
+        self.policy.train(
             epochs,
             train_loader,
             save_path=save_path,
@@ -641,7 +616,6 @@ class Agent:
             eval_freq=eval_freq,
             save_freq=save_freq,
             wandb_logger=wandb_logger,
-            cfg_options=self.cfg_options,
         )
 
         self.policy.to_ema()
@@ -776,23 +750,22 @@ def boolean_string(s):
 
 
 if __name__ == "__main__":
-    # TODO: better configs management
+    # TODO: better config management
     args = argparse.ArgumentParser()
-    # train configs
+    # train config
     args.add_argument("--batch_size", type=int, default=32)
     args.add_argument("--obs_horizon", type=int, default=1)
     args.add_argument("--action_horizon", type=int, default=8)
     args.add_argument("--pred_horizon", type=int, default=16)
-    args.add_argument("--epochs", type=int, default=220)
+    args.add_argument("--epochs", type=int, default=300)
 
-    # input configs
+    # input config
     args.add_argument("--traj_type", type=str, default="plain")
     args.add_argument("--prefix", type=str, default=None)
     args.add_argument("--save_path", type=str, default=None)
+    # args.add_argument("--load_path", type=str, default="/home/zhuoli/dobot_xtrainer/model/manidp_plate_wipping_20250205/0206_171533_LyEK-camera=012-identity=False-repr=IP-oh=1-ah=8-ph=16-prefix=None-do=0.0-imgos=32-wd=1e-05-use_ddim=True-binarize_touch=False/last.ckpt")
     args.add_argument("--load_path", type=str,
-                      default="/home/zhuoli/dobot_xtrainer/model/dp_cfg_plate_wipping_UnconditionalTraining_20250408"
-                              "/0409_144034_dMI1-camera=012-identity=False-repr=IP-oh=1-ah=8-ph=16-prefix=None-do=0.0"
-                              "-imgos=32-wd=1e-05-use_ddim=True-binarize_touch=False/last.ckpt")
+                      default=None)
 
     args.add_argument("--eval", type=boolean_string, default=False)
     args.add_argument(
@@ -802,10 +775,10 @@ if __name__ == "__main__":
     args.add_argument("--base_path", type=str, default="/shared")
     args.add_argument("--data_name", type=str, default="test_data")
     args.add_argument("--data_path", type=str,
-                      default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data/manidp_plate_wiping/collect_data")
+                      default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data/dp_tower_hanging_20250212"
+                              "/collect_data")
     args.add_argument("--data_prefix", type=str, default=None)
-    args.add_argument("--model_save_path", type=str,
-                      default="/home/zhuoli/dobot_xtrainer/model/dp_cfg_plate_wipping_UnconditionalTraining_20250408")
+    args.add_argument("--model_save_path", type=str, default="/home/zhuoli/dobot_xtrainer/model/dp_tower_hanging_20250212")
 
     args.add_argument("--clip_far", type=boolean_string, default=False)
     args.add_argument("--color_jitter", type=boolean_string, default=False)
@@ -841,7 +814,7 @@ if __name__ == "__main__":
     args.add_argument("--without_sampling", type=boolean_string, default=False)
     args.add_argument("--binarize_touch", type=boolean_string, default=False)
 
-    # model configs
+    # model config
     args.add_argument("--num_diffusion_iters", type=int, default=100)
     args.add_argument("--wandb_exp_name", type=str, default=None)
     args.add_argument("--load_img", type=boolean_string, default=False)
@@ -852,14 +825,9 @@ if __name__ == "__main__":
     args.add_argument("--memmap_loader_path", type=str, default=None)
     args.add_argument("--compile_train", type=boolean_string, default=False)
 
-    # wandb configs
+    # wandb config
     args.add_argument("--wandb_entity_name", type=str, default=None)
     args.add_argument("--wandb_project_name", type=str, default=None)
-
-    # classifier-free diffusion guidance configs
-    args.add_argument("--cfg_options", type=str,
-                      default="/home/zhuoli/dobot_xtrainer/configs/cfg_config.yaml")
-
     args = args.parse_args()
 
     if args.gpu is not None:
@@ -923,7 +891,6 @@ if __name__ == "__main__":
         img_masking_prob=args.img_masking_prob,
         img_patch_size=args.img_patch_size,
         compile_train=args.compile_train,
-        cfg_options=args.cfg_options,
     )
     if args.load_path is not None:
         agent.load(args.load_path)

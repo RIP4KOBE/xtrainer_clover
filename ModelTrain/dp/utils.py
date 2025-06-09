@@ -11,6 +11,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import roboticstoolbox as rtb
 from spatialmath import SE3
+from spatialmath.base import q2r
 
 import absl.flags
 import numpy as np
@@ -20,6 +21,12 @@ from absl import logging
 from ml_collections import ConfigDict
 from ml_collections.config_dict import config_dict
 from ml_collections.config_flags import config_flags
+from spatialmath.base import q2r
+from scipy.spatial.transform import Rotation as R
+
+
+
+
 
 
 def save_args(args, output_dir):
@@ -241,7 +248,7 @@ def to_config_dict(flattened):
 def prefix_metrics(metrics, prefix):
     return {"{}/{}".format(prefix, key): value for key, value in metrics.items()}
 
-def forward_kinematics(joint_angles, ee_link=None):
+def fk_solver(joint_angles, ee_link=None):
     """
     Compute forward kinematics (FK) to transform joint angles into end-effector pose in Cartesian space.
 
@@ -252,8 +259,8 @@ def forward_kinematics(joint_angles, ee_link=None):
     - End-effector pose (batch_size, prediction_horizon, action_dim).
     """
     # load the URDF files for the left and right arms
-    urdf = "/home/zhuoli/xtrainer_clover/assets/urdf/nova2_robot.urdf"
-    # urdf = "/home/zhuoli/dobot_xtrainer/assets/urdf/nova2_robot.urdf"
+    # urdf = "/home/zhuoli/xtrainer_clover/assets/urdf/nova2_robot.urdf"
+    urdf = "/home/zhuoli/dobot_xtrainer/assets/urdf/nova2_robot.urdf"
     xtrainer_arm = rtb.robot.ERobot.URDF(urdf)
 
     if joint_angles.ndim == 2:
@@ -277,49 +284,58 @@ def forward_kinematics(joint_angles, ee_link=None):
 
     return ee_position, ee_orientations
 
-def inverse_kinematics(ee_positions, ee_orientations, initial_joint):
+def ik_solver(ee_position, ee_orientation, initial_joint=None):
     """
-    Compute inverse kinematics (IK) for given end-effector positions.
+    Solve IK for end-effector pose (position + orientation), with flexible orientation input.
 
-    Parameters:
-    - ee_positions: np.ndarray of shape (batch_size, prediction_horizon, 3)
+    Args:
+        ee_position (np.ndarray): shape (3,)
+        ee_orientation: one of the following:
+            - 3x3 rotation matrix
+            - 4D quaternion (x, y, z, w)
+            - scipy.spatial.transform.Rotation
+        initial_joint (np.ndarray): optional initial joint guess
 
     Returns:
-    - joint_angles: np.ndarray of shape (batch_size, prediction_horizon, 6)
-    - success_flags: np.ndarray of shape (batch_size, prediction_horizon), True if IK succeeded
+        joint_angle (np.ndarray): shape (6,)
+        success_flag (bool)
     """
-    # Load robot model (6-DOF)
-    urdf = "/home/zhuoli/xtrainer_clover/assets/urdf/nova2_robot.urdf"
-    # urdf = "/home/zhuoli/dobot_xtrainer/assets/urdf/nova2_robot.urdf"
-
+    urdf = "/home/zhuoli/dobot_xtrainer/assets/urdf/nova2_robot.urdf"
     robot = rtb.robot.ERobot.URDF(urdf)
 
-    batch_size, prediction_horizon, _ = ee_positions.shape
-    joint_angles = np.zeros((batch_size, prediction_horizon, 6))
-    success_flags = np.zeros((batch_size, prediction_horizon), dtype=bool)
+    # Ensure ee_position is a flat 3D vector
+    ee_position = np.asarray(ee_position).flatten()
 
-    for b in range(batch_size):
-        for t in range(prediction_horizon):
-            # print(f"IK batch {b}, step {t}")
-            pos = ee_positions[b, t, :]  # (x, y, z)
-            orient = ee_orientations[b, t, :, :]  # 3x3 rotation matrix
-            target_pose = SE3.Rt(R=orient, t=pos)
+    # --- Normalize & convert orientation ---
+    if isinstance(ee_orientation, R):  # scipy Rotation
+        rot_matrix = ee_orientation.as_matrix()
+    elif isinstance(ee_orientation, np.ndarray):
+        ee_orientation = np.asarray(ee_orientation)
+        if ee_orientation.shape == (3, 3):
+            rot_matrix = ee_orientation
+        elif ee_orientation.shape == (4,):  # quaternion
+            rot_matrix = q2r(ee_orientation)  # spatialmath.base
+        else:
+            raise ValueError(f"Unsupported orientation shape: {ee_orientation.shape}")
+    else:
+        raise TypeError(f"Unsupported ee_orientation type: {type(ee_orientation)}")
 
-            try:
-                # q, success, _, _, _ = robot.ik_LM(target_pose)
-                solution = robot.ikine_LM(target_pose, q0=initial_joint, ilimit=15, slimit=50,)
+    # Construct SE3 pose
+    target_pose = SE3.Rt(R=rot_matrix, t=ee_position)
 
-            except Exception as e:
-                print(f"IK exception at batch {b}, step {t}: {e}")
+    # Call inverse kinematics
+    solution = robot.ikine_LM(
+        target_pose,
+        q0=initial_joint,
+        ilimit=15,
+        slimit=50,
+    )
 
-            if solution.success:
-                joint_angles[b, t, :] = solution.q
-                success_flags[b, t] = True
-            else:
-                print(f"IK failed at batch {b}, step {t}")
-                success_flags[b, t] = False
-
-    return joint_angles, success_flags
+    if solution.success:
+        return solution.q, True
+    else:
+        print("IK failed")
+        return np.zeros(robot.n), False
 
 
 def align_trajs_to_origin(population_trajectories, traj_origin):
@@ -343,8 +359,8 @@ def align_trajs_to_origin(population_trajectories, traj_origin):
     left_arm_trajs = population_trajectories[:, :, :6]    # (B, T, 7)
     right_arm_trajs = population_trajectories[:, :, 7:13] # (B, T, 7)
 
-    left_ee_positions, left_ee_orientations = forward_kinematics(left_arm_trajs)   # (B, T, 3)
-    right_ee_positions, right_ee_orientations = forward_kinematics(right_arm_trajs) # (B, T, 3)
+    left_ee_positions, left_ee_orientations = fk_solver(left_arm_trajs)   # (B, T, 3)
+    right_ee_positions, right_ee_orientations = fk_solver(right_arm_trajs) # (B, T, 3)
 
     left_ee_positions = np.array(left_ee_positions)
     right_ee_positions = np.array(right_ee_positions)
@@ -354,8 +370,8 @@ def align_trajs_to_origin(population_trajectories, traj_origin):
     origin_left_arm = traj_origin[:6]
     origin_right_arm = traj_origin[7:13]
 
-    origin_left_pos, origin_left_orientations = forward_kinematics(origin_left_arm)   # (1, T, 3)
-    origin_right_pos, origin_right_orientations = forward_kinematics(origin_right_arm) # (1, T, 3)
+    origin_left_pos, origin_left_orientations = fk_solver(origin_left_arm)   # (1, T, 3)
+    origin_right_pos, origin_right_orientations = fk_solver(origin_right_arm) # (1, T, 3)
 
     origin_left_pos = np.array(origin_left_pos)
     origin_right_pos = np.array(origin_right_pos)
@@ -369,8 +385,22 @@ def align_trajs_to_origin(population_trajectories, traj_origin):
     aligned_left_ee_positions = left_ee_positions + left_offsets[:, np.newaxis, :]    # (B, T, 3)
     aligned_right_ee_positions = right_ee_positions + right_offsets[:, np.newaxis, :] # (B, T, 3)
 
-    aligned_left_joints, success_left = inverse_kinematics(aligned_left_ee_positions, left_ee_orientations, origin_left_arm)
-    aligned_right_joints, success_right = inverse_kinematics(aligned_right_ee_positions, right_ee_orientations, origin_right_arm)
+    aligned_left_joints = np.zeros((B, T, 6))  # (B, T, 6)
+    aligned_right_joints = np.zeros((B, T, 6)) # (B, T, 6)
+    for b in range(B):
+        for t in range(T):
+            left_q, success_left = ik_solver(aligned_left_ee_positions[b, t, :], left_ee_orientations[b, t, :, :], origin_left_arm)
+            right_q, success_right = ik_solver(aligned_right_ee_positions[b, t, :], right_ee_orientations[b, t, :, :], origin_right_arm)
+
+            if success_left and success_right:
+                aligned_left_joints[b, t, :] = left_q
+                aligned_right_joints[b, t, :] = right_q
+
+            else:
+                print(f"IK failed at batch {b}, step {t}")
+
+    # aligned_left_joints, success_left = ik_solver(aligned_left_ee_positions, left_ee_orientations, origin_left_arm)
+    # aligned_right_joints, success_right = ik_solver(aligned_right_ee_positions, right_ee_orientations, origin_right_arm)
 
     aligned_population_trajectories = population_trajectories.copy()
     aligned_population_trajectories[:, :, :6] = aligned_left_joints
@@ -466,15 +496,15 @@ def kinematic_func_test():
     )
 
     # Step 1: Forward Kinematics to obtain end-effector poses
-    ee_pos, ee_orient = forward_kinematics(random_joint_angles)
+    ee_pos, ee_orient = fk_solver(random_joint_angles)
 
     # Step 2: Inverse Kinematics to recover joint angles from poses
-    recovered_joint_angles, success_flags = inverse_kinematics(
+    recovered_joint_angles, success_flags = ik_solver(
         ee_pos, ee_orient, initial_joint=None
     )
 
     # Step 3: Forward Kinematics again on recovered joint angles
-    ee_pos_recovered, ee_orient_recovered = forward_kinematics(recovered_joint_angles)
+    ee_pos_recovered, ee_orient_recovered = fk_solver(recovered_joint_angles)
 
     # Step 4: Compute position and orientation errors
     pos_error = np.linalg.norm(ee_pos - ee_pos_recovered, axis=-1)  # Euclidean distance
@@ -508,7 +538,31 @@ def kinematic_func_test():
 
 
 if __name__ == "__main__":
-    kinematic_func_test()  # Run the test function
+    # kinmeatic function test
+
+    #fk
+    nova_left_init_joint_pose = [-1.5708, 0, -1.5708, 0, 1.5708, 1.5708]
+    nova_right_init_joint_pose = [1.5708, 0, 1.5708, 0, -1.5708, -1.5708]
+    # l_ee_pos, l_ee_rot = fk_solver(np.array(nova_left_init_joint_pose))
+    # r_ee_pos, r_ee_rot = fk_solver(np.array(nova_right_init_joint_pose))
+    # # transform the 3x3 rotation matrix to quaternion
+    # l_ee_pos = l_ee_pos[0][0]
+    # r_ee_pos = r_ee_pos[0][0]
+    # l_ee_rot = quaternion.from_rotation_matrix(l_ee_rot[0][0])
+    # r_ee_rot = quaternion.from_rotation_matrix(r_ee_rot[0][0])
+    #
+    # print("Left EE Position:", l_ee_pos, "Left EE Rotation:", l_ee_rot)
+    # print("Right EE Position:", r_ee_pos, "Right EE Rotation:", r_ee_rot)
+
+
+    # ik
+    l_ee_pos = np.array([-1.1750e-01, -3.4501e-01,  4.1539e-01])
+    l_ee_rot = R.from_quat([3.89601281525054e-06, -0.707109378514511, -0.707104183808496, -6.49338013368839e-06])
+    l_joints = ik_solver(l_ee_pos, l_ee_rot, initial_joint=np.array(nova_left_init_joint_pose))
+    print("Left Joint Angles:", l_joints[0], "Success:", l_joints[1])
+
+
+
     # Example usage
     # traj_origin = np.random.rand(1, 16, 14)  # Example trajectory
     # best_trajectory = np.random.rand(1, 16, 14)  # Example best trajectory

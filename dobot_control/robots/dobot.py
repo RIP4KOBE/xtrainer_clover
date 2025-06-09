@@ -203,9 +203,13 @@ class DobotRobot(Robot):
         }
 
     def get_obs(self) -> Dict[str, np.ndarray]:
+        # 获取关节状态
         joints = self.get_joint_state()
+        # 初始化位置和四元数
         pos_quat = np.zeros(7)
+        # 获取夹爪位置
         gripper_pos = np.array([joints[-1]])
+        # 返回观测值
         return {
             "joint_positions": joints,
             "joint_velocities": joints,

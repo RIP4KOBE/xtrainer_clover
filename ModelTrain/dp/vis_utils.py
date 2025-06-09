@@ -4,7 +4,7 @@ import roboticstoolbox as rtb
 import open3d as o3d
 import transform_utils as T
 from numba import njit
-from ModelTrain.dp.utils import forward_kinematics
+from ModelTrain.dp.utils import fk_solver
 
 # def visualize_trajectory(population_trajectories, best_trajectory):
 #     """
@@ -135,8 +135,8 @@ def visualize_trajectory(left_ee_positions, right_ee_positions, best_trajectory)
 
     best_left_arm = best_trajectory[:, :6]  # (prediction_horizon, 7)
     best_right_arm = best_trajectory[:, 7:13]  # (prediction_horizon, 7)
-    best_left_ee_positions, _ = forward_kinematics(best_left_arm)  # (prediction_horizon, 3)
-    best_right_ee_positions, _ = forward_kinematics(best_right_arm)
+    best_left_ee_positions, _ = fk_solver(best_left_arm)  # (prediction_horizon, 3)
+    best_right_ee_positions, _ = fk_solver(best_right_arm)
     best_left_ee_positions = np.array(best_left_ee_positions)
     best_right_ee_positions = np.array(best_right_ee_positions)
 

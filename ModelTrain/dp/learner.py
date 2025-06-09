@@ -8,19 +8,26 @@ import json
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from diffusers.optimization import get_scheduler
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from diffusers.training_utils import EMAModel
+from einops import rearrange, reduce
 from jsonschema.exceptions import best_match
 
 from ModelTrain.dp.models import *
 from torch.nn.functional import mse_loss
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
-from utils import forward_kinematics, align_trajs_to_origin, bimanual_coordinator,bimanual_frame_transform, get_config
+from typing import Dict, Tuple
+from utils import fk_solver, align_trajs_to_origin, bimanual_coordinator,bimanual_frame_transform, get_config
 from vis_utils import visualize_trajectory
 from keypoint_proposer import KeypointProposer
+
+from ModelTrain.dp.bimanual_motion_prior.normalizer import LinearNormalizer, QuatSafeNormalizer
+from ModelTrain.dp.bimanual_motion_prior.mask_generator import LowdimMaskGenerator
+
 
 
 def normalize_data(data, stats):
@@ -337,7 +344,9 @@ class DiffusionPolicy:
                         wandb_logger.log({"Normalized_MSE": normalized_mse})
                     print(f"Action_MSE: {mse}, Normalized_MSE: {normalized_mse}")
                     self.ema_nets.train()
-
+                    return None
+                return None
+            return None
 
     def train_cfg(
         self,
@@ -592,6 +601,9 @@ class DiffusionPolicy:
                         wandb_logger.log({"Normalized_MSE": normalized_mse})
                     print(f"Action_MSE: {mse}, Normalized_MSE: {normalized_mse}")
                     self.ema_nets.train()
+                    return None
+                return None
+            return None
 
     def eval(self, obs, action):
         obs_deque = collections.deque(
@@ -1031,7 +1043,7 @@ class DiffusionPolicy:
             left_trajectory = trajectory[:, :, :6]
 
             # Extract predicted left arm ee positions
-            ee_position, _ = forward_kinematics(left_trajectory)  # Shape: (batch, 16)
+            ee_position, _ = fk_solver(left_trajectory)  # Shape: (batch, 16)
             scores = np.zeros(self.sampling_batch_size)
 
             # Iterate scoring each trajectory in the batch
@@ -1062,7 +1074,7 @@ class DiffusionPolicy:
             right_trajectory = trajectory[:, :, 7:13]  # Extract right arm joint angles
 
             # Extract predicted right arm end-effector positions
-            ee_position, _  = forward_kinematics(right_trajectory)  # Shape: (batch, 16, 3)
+            ee_position, _  = fk_solver(right_trajectory)  # Shape: (batch, 16, 3)
             scores = np.zeros(self.sampling_batch_size)
 
             # Iterate scoring each trajectory in the batch
@@ -1131,8 +1143,8 @@ class DiffusionPolicy:
             right_trajectory = trajectory[:, :, 7:13]
 
             # Extract predicted end-effector positions for both arms
-            left_ee_position, _ = forward_kinematics(left_trajectory)  # Shape: (batch, 16, 3)
-            right_ee_position, _ = forward_kinematics(right_trajectory)  # Shape: (batch, 16, 3)
+            left_ee_position, _ = fk_solver(left_trajectory)  # Shape: (batch, 16, 3)
+            right_ee_position, _ = fk_solver(right_trajectory)  # Shape: (batch, 16, 3)
 
             scores = np.zeros(self.sampling_batch_size)
 
@@ -1173,8 +1185,8 @@ class DiffusionPolicy:
             right_trajectory = trajectory[:, :, 7:13]
 
             # Forward kinematics to get end-effector positions
-            left_ee_position, _ = forward_kinematics(left_trajectory)  # Shape: (batch, 16, 3)
-            right_ee_position, _ = forward_kinematics(right_trajectory)  # Shape: (batch, 16, 3)
+            left_ee_position, _ = fk_solver(left_trajectory)  # Shape: (batch, 16, 3)
+            right_ee_position, _ = fk_solver(right_trajectory)  # Shape: (batch, 16, 3)
 
             left_ee_position, right_ee_position = bimanual_frame_transform(left_ee_position, right_ee_position)
 
@@ -1217,8 +1229,8 @@ class DiffusionPolicy:
             right_trajectory = trajectory[:, :, 7:]
 
             # Compute end-effector positions
-            left_ee_position, _ = forward_kinematics(left_trajectory)  # Shape: (batch, 16, 3)
-            right_ee_position, _ = forward_kinematics(right_trajectory)  # Shape: (batch, 16, 3)
+            left_ee_position, _ = fk_solver(left_trajectory)  # Shape: (batch, 16, 3)
+            right_ee_position, _ = fk_solver(right_trajectory)  # Shape: (batch, 16, 3)
 
             scores = np.zeros(left_ee_position.shape[0])  # batch size
 
@@ -1266,8 +1278,8 @@ class DiffusionPolicy:
             right_trajectory = trajectory[:, :, 7:13]  # (batch, 16, 7)
 
             # Step 3: Run FK to get joint positions of the whole kinematic chain
-            left_joint_positions, _ = forward_kinematics(left_trajectory, ee_link="Link3")
-            right_joint_positions, _ = forward_kinematics(right_trajectory, ee_link="Link3")
+            left_joint_positions, _ = fk_solver(left_trajectory, ee_link="Link3")
+            right_joint_positions, _ = fk_solver(right_trajectory, ee_link="Link3")
 
             # Step 5: 计算每个trajectory中肘部高度的变化
             scores = np.zeros(self.sampling_batch_size)
@@ -1353,7 +1365,7 @@ class DiffusionPolicy:
             left_trajectory = trajectory[:, :, :6]
 
             # Extract predicted left arm end-effector positions
-            ee_positions, _ = forward_kinematics(left_trajectory)  # Shape: (batch, 16, 3)
+            ee_positions, _ = fk_solver(left_trajectory)  # Shape: (batch, 16, 3)
             scores = np.zeros(trajectory.shape[0])
 
             for i in range(trajectory.shape[0]):
@@ -1368,8 +1380,6 @@ class DiffusionPolicy:
 
         return avoid_left_collision
 
-
-
 # def compute_constraint_scores(constraints, trajectory):
 #     all_info = {}
 #     total_cost = torch.zeros(trajectory.shape[0], device=trajectory.device)
@@ -1380,5 +1390,586 @@ class DiffusionPolicy:
 #     return total_cost, all_info
 
 
+class BaseLowdimPolicy(ModuleAttrMixin):
+    # ========= inference  ============
+    # also as self.device and self.dtype for inference device transfer
+    def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """
+        obs_dict:
+            obs: B,To,Do
+        return:
+            action: B,Ta,Da
+        To = 3
+        Ta = 4
+        T = 6
+        |o|o|o|
+        | | |a|a|a|a|
+        |o|o|
+        | |a|a|a|a|a|
+        | | | | |a|a|
+        """
+        raise NotImplementedError()
 
+    # reset state for stateful policies
+    def reset(self):
+        pass
+
+    # ========== training ===========
+    # no standard training interface except setting normalizer
+    def set_normalizer(self, normalizer: LinearNormalizer):
+        raise NotImplementedError()
+
+
+
+class ConditionalBimanualMotionPrior(BaseLowdimPolicy):
+    def __init__(self,
+                 noise_scheduler: DDPMScheduler,
+                 # task parameters
+                 horizon,
+                 obs_dim,
+                 action_dim,
+                 n_action_steps,
+                 n_obs_steps,
+                 num_inference_steps=None,
+                 # arch
+                 causal_attn=False,
+                 time_as_cond=True,
+                 obs_as_cond=True,
+                 pred_action_steps_only=False,
+                 # parameters passed to step
+                 **kwargs):
+        super().__init__()
+        if pred_action_steps_only:
+            assert obs_as_cond
+
+        eef_dim = obs_dim
+        eef_feature_dim = 64
+        eef_encoder = StateEncoder(
+            input_size=eef_dim,
+            output_size=eef_feature_dim,
+            hidden_size=128,
+            dropout=0.0,
+        )
+
+        input_dim = action_dim if obs_as_cond else (eef_feature_dim + action_dim)
+        output_dim = input_dim
+        cond_dim = eef_feature_dim if obs_as_cond else 0
+
+        model = TransformerForDiffusion(
+            input_dim=input_dim,
+            output_dim=output_dim,
+            horizon=horizon,
+            n_obs_steps=n_obs_steps,
+            cond_dim=cond_dim,
+            # n_layer=n_layer,
+            # n_head=n_head,
+            # n_emb=n_emb,
+            # p_drop_emb=p_drop_emb,
+            # p_drop_attn=p_drop_attn,
+            causal_attn=causal_attn,
+            time_as_cond=time_as_cond,
+            obs_as_cond=obs_as_cond,
+            # n_cond_layers=n_cond_layers
+        )
+
+        self.model = model
+        self.eef_encoder = eef_encoder
+        self.noise_scheduler = noise_scheduler
+        self.mask_generator = LowdimMaskGenerator(
+            action_dim=action_dim,
+            obs_dim=0 if (obs_as_cond) else obs_dim,
+            max_n_obs_steps=n_obs_steps,
+            fix_obs_steps=True,
+            action_visible=False
+        )
+        self.normalizer = LinearNormalizer()
+        self.horizon = horizon
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
+        self.n_action_steps = n_action_steps
+        self.n_obs_steps = n_obs_steps
+        self.obs_as_cond = obs_as_cond
+        self.pred_action_steps_only = pred_action_steps_only
+        self.kwargs = kwargs
+
+        if num_inference_steps is None:
+            num_inference_steps = noise_scheduler.config.num_train_timesteps
+        self.num_inference_steps = num_inference_steps
+
+    # ========= inference  ============
+    def conditional_sample(self,
+                           condition_data, condition_mask,
+                           cond=None, generator=None,
+                           # keyword arguments to scheduler.step
+                           **kwargs
+                           ):
+        model = self.model
+        scheduler = self.noise_scheduler
+
+        trajectory = torch.randn(
+            size=condition_data.shape,
+            dtype=condition_data.dtype,
+            device=condition_data.device,
+            generator=generator)
+
+        # set step values
+        scheduler.set_timesteps(self.num_inference_steps)
+
+        for t in scheduler.timesteps:
+            # 1. apply conditioning
+            trajectory[condition_mask] = condition_data[condition_mask]
+
+            # 2. predict model output
+            model_output = model(trajectory, t, cond)
+
+            # 3. compute previous image: x_t -> x_t-1
+            trajectory = scheduler.step(
+                model_output, t, trajectory,
+                generator=generator,
+                **kwargs
+            ).prev_sample
+
+        # finally make sure conditioning is enforced
+        trajectory[condition_mask] = condition_data[condition_mask]
+
+        return trajectory
+
+    def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """
+        obs_dict: must include "obs" key
+        result: must include "action" key
+        """
+
+        assert 'obs' in obs_dict
+        assert 'past_action' not in obs_dict  # not implemented yet
+        nobs = self.normalizer['obs'].normalize(obs_dict['obs'])
+        B, _, Do = nobs.shape
+        To = self.n_obs_steps
+        assert Do == self.obs_dim
+        T = self.horizon
+        Da = self.action_dim
+
+        # build input
+        device = self.device
+        dtype = self.dtype
+
+        # handle different ways of passing observation
+        cond = None
+        cond_data = None
+        cond_mask = None
+        if self.obs_as_cond:
+            this_nobs = nobs[:, :To]
+            nobs_features = self.eef_encoder(this_nobs)
+            cond = nobs_features.reshape(B, To, -1)
+            shape = (B, T, Da)
+            if self.pred_action_steps_only:
+                shape = (B, self.n_action_steps, Da)
+            cond_data = torch.zeros(size=shape, device=device, dtype=dtype)
+            cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
+        else:
+            # condition through impainting
+            shape = (B, T, Da + Do)
+            cond_data = torch.zeros(size=shape, device=device, dtype=dtype)
+            cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
+            cond_data[:, :To, Da:] = nobs[:, :To]
+            cond_mask[:, :To, Da:] = True
+
+        # run sampling
+        nsample = self.conditional_sample(
+            cond_data,
+            cond_mask,
+            cond=cond,
+            **self.kwargs)
+
+        # unnormalize prediction
+        naction_pred = nsample[..., :Da]
+        action_pred = self.normalizer['action'].unnormalize(naction_pred)
+
+        # get action
+        if self.pred_action_steps_only:
+            action = action_pred
+        else:
+            start = To - 1
+            end = start + self.n_action_steps
+            action = action_pred[:, start:end]
+
+        result = {
+            'action': action,
+            'action_pred': action_pred
+        }
+        if not self.obs_as_cond:
+            nobs_pred = nsample[..., Da:]
+            obs_pred = self.normalizer['obs'].unnormalize(nobs_pred)
+            action_obs_pred = obs_pred[:, start:end]
+            result['action_obs_pred'] = action_obs_pred
+            result['obs_pred'] = obs_pred
+        return result
+
+    # ========= training  ============
+    def set_normalizer(self, normalizer: LinearNormalizer):
+        self.normalizer.load_state_dict(normalizer.state_dict())
+
+    def get_optimizer(
+            self, weight_decay: float, learning_rate: float, betas: Tuple[float, float]
+    ) -> torch.optim.Optimizer:
+        return self.model.configure_optimizers(
+            weight_decay=weight_decay,
+            learning_rate=learning_rate,
+            betas=tuple(betas))
+
+    def compute_loss(self, batch):
+        # normalize input
+        assert 'valid_mask' not in batch
+        nbatch = self.normalizer.normalize(batch)
+        obs = nbatch['obs']
+        action = nbatch['action']
+
+        # handle different ways of passing observation
+        cond = None
+        trajectory = action
+        if self.obs_as_cond:
+            cond = obs[:, :self.n_obs_steps, :]
+            if self.pred_action_steps_only:
+                To = self.n_obs_steps
+                start = To - 1
+                end = start + self.n_action_steps
+                trajectory = action[:, start:end]
+        else:
+            trajectory = torch.cat([action, obs], dim=-1)
+
+        # generate impainting mask
+        if self.pred_action_steps_only:
+            condition_mask = torch.zeros_like(trajectory, dtype=torch.bool)
+        else:
+            condition_mask = self.mask_generator(trajectory.shape)
+
+        # Sample noise that we'll add to the images
+        noise = torch.randn(trajectory.shape, device=trajectory.device)
+        bsz = trajectory.shape[0]
+        # Sample a random timestep for each image
+        timesteps = torch.randint(
+            0, self.noise_scheduler.config.num_train_timesteps,
+            (bsz,), device=trajectory.device
+        ).long()
+        # Add noise to the clean images according to the noise magnitude at each timestep
+        # (this is the forward diffusion process)
+        noisy_trajectory = self.noise_scheduler.add_noise(
+            trajectory, noise, timesteps)
+
+        # compute loss mask
+        loss_mask = ~condition_mask
+
+        # apply conditioning
+        noisy_trajectory[condition_mask] = trajectory[condition_mask]
+
+        # Predict the noise residual
+        pred = self.model(noisy_trajectory, timesteps, cond)
+
+        pred_type = self.noise_scheduler.config.prediction_type
+        if pred_type == 'epsilon':
+            target = noise
+        elif pred_type == 'sample':
+            target = trajectory
+        else:
+            raise ValueError(f"Unsupported prediction type {pred_type}")
+
+        loss = F.mse_loss(pred, target, reduction='none')
+        loss = loss * loss_mask.type(loss.dtype)
+        loss = reduce(loss, 'b ... -> b (...)', 'mean')
+        loss = loss.mean()
+        return loss
+
+
+class UnConditionalBimanualMotionPrior(BaseLowdimPolicy):
+    def __init__(self,
+                 noise_scheduler: DDPMScheduler,
+                 # task parameters
+                 horizon,
+                 obs_dim,
+                 action_dim,
+                 n_action_steps,
+                 n_obs_steps,
+                 num_inference_steps=None,
+                 # arch
+                 causal_attn=False,
+                 time_as_cond=False,
+                 obs_as_cond=False,
+                 pred_action_steps_only=False,
+                 # parameters passed to step
+                 **kwargs):
+        super().__init__()
+        if pred_action_steps_only:
+            assert obs_as_cond
+
+        # eef_dim = obs_dim
+        # eef_feature_dim = 64
+        # eef_encoder = StateEncoder(
+        #     input_size=eef_dim,
+        #     output_size=eef_feature_dim,
+        #     hidden_size=128,
+        #     dropout=0.0,
+        # )
+
+        input_dim = action_dim
+        output_dim = input_dim
+        cond_dim = 0
+
+        model = TransformerForDiffusion(
+            input_dim=input_dim,
+            output_dim=output_dim,
+            horizon=horizon,
+            n_obs_steps=n_obs_steps,
+            cond_dim=cond_dim,
+            # n_layer=n_layer,
+            # n_head=n_head,
+            # n_emb=n_emb,
+            # p_drop_emb=p_drop_emb,
+            # p_drop_attn=p_drop_attn,
+            causal_attn=causal_attn,
+            time_as_cond=time_as_cond,
+            obs_as_cond=obs_as_cond,
+            # n_cond_layers=n_cond_layers
+        )
+
+        self.model = model
+        self.noise_scheduler = noise_scheduler
+        self.mask_generator = LowdimMaskGenerator(
+            action_dim=action_dim,
+            obs_dim=0 if (obs_as_cond) else obs_dim,
+            max_n_obs_steps=n_obs_steps,
+            fix_obs_steps=True,
+            action_visible=False
+        )
+        self.quat_dims = list(range(3, 7)) + list(range(11, 15))
+        self.normalizer = QuatSafeNormalizer(self.quat_dims)
+        # self.normalizer = LinearNormalizer()
+        self.horizon = horizon
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
+        self.n_action_steps = n_action_steps
+        self.n_obs_steps = n_obs_steps
+        self.obs_as_cond = obs_as_cond
+        self.pred_action_steps_only = pred_action_steps_only
+        self.kwargs = kwargs
+
+        # print("Received kwargs:", kwargs)
+
+        if num_inference_steps is None:
+            num_inference_steps = noise_scheduler.config.num_train_timesteps
+        self.num_inference_steps = num_inference_steps
+
+    # ========= inference  ============
+    def unconditional_sample(self,
+                             action_data, generator=None,
+                             # keyword arguments to scheduler.step
+                             **kwargs
+                             ):
+        model = self.model
+        scheduler = self.noise_scheduler
+
+        print("Noise Scheduler Config:")
+        print(self.noise_scheduler.config)
+
+        trajectory = torch.randn(
+            size=action_data.shape,
+            dtype=action_data.dtype,
+            device=action_data.device,
+            generator=generator)
+
+        # set step values
+        scheduler.set_timesteps(self.num_inference_steps)
+
+        for t in scheduler.timesteps:
+            # # 1. apply conditioning
+            # trajectory[condition_mask] = condition_data[condition_mask]
+
+            # 2. predict model output
+            model_output = model(trajectory, t)
+
+            # print("kwargs:", kwargs)
+
+            # 3. compute previous image: x_t -> x_t-1
+            trajectory = scheduler.step(
+                model_output, t, trajectory,
+                generator=generator,
+            ).prev_sample
+
+            # trajectory = scheduler.step(
+            #     model_output, t, trajectory,
+            #     generator=generator,
+            #     **kwargs
+            # ).prev_sample
+
+        # finally make sure conditioning is enforced
+        # trajectory[condition_mask] = condition_data[condition_mask]
+
+        return trajectory
+
+    def predict_action(self, action_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """
+        action_dict: must include "action" key
+        result: must include "action" key
+        """
+
+        # assert 'obs' in obs_dict
+        # assert 'past_action' not in obs_dict  # not implemented yet
+        # nobs = self.normalizer['obs'].normalize(obs_dict['obs'])
+        # B, _, Do = nobs.shape
+        # To = self.n_obs_steps
+        # assert Do == self.obs_dim
+
+        B, _, Da = action_dict['action'].shape
+        T = self.horizon
+        assert Da == self.action_dim
+
+        # build input
+        device = self.device
+        dtype = self.dtype
+        shape = (B, T, Da)
+        action_data = torch.zeros(size=shape, device=device, dtype=dtype)
+
+        nsample = self.unconditional_sample(
+            action_data,
+            **self.kwargs)
+
+        # # handle different ways of passing observation
+        # cond = None
+        # cond_data = None
+        # cond_mask = None
+        # if self.obs_as_cond:
+        #     this_nobs = nobs[:, :To]
+        #     nobs_features = self.eef_encoder(this_nobs)
+        #     cond = nobs_features.reshape(B, To, -1)
+        #     shape = (B, T, Da)
+        #     if self.pred_action_steps_only:
+        #         shape = (B, self.n_action_steps, Da)
+        #     cond_data = torch.zeros(size=shape, device=device, dtype=dtype)
+        #     cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
+        # else:
+        #     # condition through impainting
+        #     shape = (B, T, Da + Do)
+        #     cond_data = torch.zeros(size=shape, device=device, dtype=dtype)
+        #     cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
+        #     cond_data[:, :To, Da:] = nobs[:, :To]
+        #     cond_mask[:, :To, Da:] = True
+
+        # # run sampling
+        # nsample = self.unconditional_sample(
+        #     cond_data,
+        #     cond_mask,
+        #     cond=cond,
+        #     **self.kwargs)
+
+
+        # unnormalize prediction
+
+        naction_pred = nsample[..., :Da]
+        action_pred = self.normalizer['action'].unnormalize(naction_pred)
+        action = action_pred[:, :self.n_action_steps]
+
+        # # get action
+        # if self.pred_action_steps_only:
+        #     action = action_pred
+        # else:
+        #     start = To - 1
+        #     end = start + self.n_action_steps
+        #     action = action_pred[:, start:end]
+
+        result = {
+            'action': action,
+            'action_pred': action_pred
+        }
+
+        # if not self.obs_as_cond:
+        #     nobs_pred = nsample[..., Da:]
+        #     obs_pred = self.normalizer['obs'].unnormalize(nobs_pred)
+        #     action_obs_pred = obs_pred[:, start:end]
+        #     result['action_obs_pred'] = action_obs_pred
+        #     result['obs_pred'] = obs_pred
+
+        return result
+
+    # ========= training  ============
+    def set_normalizer(self, normalizer: LinearNormalizer):
+        self.normalizer.load_state_dict(normalizer.state_dict())
+
+    def get_optimizer(
+            self, weight_decay: float, learning_rate: float, betas: Tuple[float, float]
+    ) -> torch.optim.Optimizer:
+        return self.model.configure_optimizers(
+            weight_decay=weight_decay,
+            learning_rate=learning_rate,
+            betas=tuple(betas))
+
+    def compute_loss(self, batch):
+        # normalize input
+        assert 'valid_mask' not in batch
+        nbatch = self.normalizer.normalize(batch)
+        # obs = nbatch['obs']
+        action = nbatch['action']
+        trajectory = action
+        # print("trajectory:", trajectory.min().item(), trajectory.max().item(), torch.isnan(trajectory).any().item(),
+        #       torch.isinf(trajectory).any().item())
+
+        # # handle different ways of passing observation
+        # cond = None
+        # trajectory = action
+        # if self.obs_as_cond:
+        #     cond = obs[:, :self.n_obs_steps, :]
+        #     if self.pred_action_steps_only:
+        #         To = self.n_obs_steps
+        #         start = To - 1
+        #         end = start + self.n_action_steps
+        #         trajectory = action[:, start:end]
+        # else:
+        #     trajectory = torch.cat([action, obs], dim=-1)
+
+
+        # generate impainting mask
+        # if self.pred_action_steps_only:
+        #     condition_mask = torch.zeros_like(trajectory, dtype=torch.bool)
+        # else:
+        #     condition_mask = self.mask_generator(trajectory.shape)
+
+        # Sample noise that we'll add to the images
+
+        noise = torch.randn(trajectory.shape, device=trajectory.device)
+        bsz = trajectory.shape[0]
+        # Sample a random timestep for each image
+        timesteps = torch.randint(
+            0, self.noise_scheduler.config.num_train_timesteps,
+            (bsz,), device=trajectory.device
+        ).long()
+        # Add noise to the clean images according to the noise magnitude at each timestep
+        # (this is the forward diffusion process)
+        noisy_trajectory = self.noise_scheduler.add_noise(
+            trajectory, noise, timesteps)
+        # print("noisy_trajectory has NaN:", torch.isnan(noisy_trajectory).any().item())
+
+        # # compute loss mask
+        # loss_mask = ~condition_mask
+        #
+        # # apply conditioning
+        # noisy_trajectory[condition_mask] = trajectory[condition_mask]
+
+        # Predict the noise residual
+        pred = self.model(noisy_trajectory, timesteps)
+
+        pred_type = self.noise_scheduler.config.prediction_type
+        if pred_type == 'epsilon':
+            target = noise
+        elif pred_type == 'sample':
+            target = trajectory
+        else:
+            raise ValueError(f"Unsupported prediction type {pred_type}")
+
+        # print("pred stats:", pred.min().item(), pred.max().item(), torch.isnan(pred).any().item(),
+        #       torch.isinf(pred).any().item())
+        # print("target stats:", target.min().item(), target.max().item(), torch.isnan(target).any().item(),
+        #       torch.isinf(target).any().item())
+        loss = F.mse_loss(pred, target, reduction='none')
+        # loss = loss * loss_mask.type(loss.dtype)
+        loss = reduce(loss, 'b ... -> b (...)', 'mean')
+        loss = loss.mean()
+        return loss
 
