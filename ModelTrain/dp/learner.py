@@ -1756,7 +1756,7 @@ class UnConditionalBimanualMotionPrior(BaseLowdimPolicy):
 
         if num_inference_steps is None:
             num_inference_steps = noise_scheduler.config.num_train_timesteps
-        self.num_inference_steps = num_inference_steps
+        self.num_inference_steps = 10
 
     # ========= inference  ============
     def unconditional_sample(self,
@@ -1805,10 +1805,9 @@ class UnConditionalBimanualMotionPrior(BaseLowdimPolicy):
 
         return trajectory
 
-    def predict_action(self, action_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def predict_action(self, batch_size) -> Dict[str, torch.Tensor]:
         """
-        action_dict: must include "action" key
-        result: must include "action" key
+        batch_size: number of bimanual motion prior to generate
         """
 
         # assert 'obs' in obs_dict
@@ -1818,9 +1817,9 @@ class UnConditionalBimanualMotionPrior(BaseLowdimPolicy):
         # To = self.n_obs_steps
         # assert Do == self.obs_dim
 
-        B, _, Da = action_dict['action'].shape
+        B = batch_size
         T = self.horizon
-        assert Da == self.action_dim
+        Da = self.action_dim
 
         # build input
         device = self.device

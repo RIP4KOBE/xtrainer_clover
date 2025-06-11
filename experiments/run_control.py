@@ -26,7 +26,7 @@ class Args:
     show_img: bool = False
     # save_data_path = "/media/zhuoli/5HYSSD/xtrainer/datasets/manidp_experiments/"
     save_data_path = "/media/zhuoli/8ECE-77DB/xtrainer/Datasets/DP/"
-    project_name = "assistivedressing"
+    project_name = "assistive_dressing"
     agent_name = "dp"
     dp_save_png = False
     handeye_calibration = True
