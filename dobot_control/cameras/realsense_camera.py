@@ -30,8 +30,8 @@ class RealSenseCamera(CameraDriver):
         config = rs.config()
         config.enable_device(device_id)
 
-        config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 90)
-        config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 90)
+        config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+        config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
         self._pipeline.start(config)
         self._flip = flip
         # print(device_id)

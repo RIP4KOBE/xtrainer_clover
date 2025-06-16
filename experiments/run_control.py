@@ -25,8 +25,9 @@ class Args:
     hostname: str = "127.0.0.1"
     show_img: bool = False
     # save_data_path = "/media/zhuoli/5HYSSD/xtrainer/datasets/manidp_experiments/"
-    save_data_path = "/media/zhuoli/5hyDrive/xtrainer/datasets"
-    project_name = "dp_tower_hanging_20250212"
+    save_data_path = "/media/zhuoli/8ECE-77DB/xtrainer/Datasets/DP/"
+    project_name = "dp_plate_wiping_20250610"
+    # project_name = "test"
     agent_name = "dp"
     dp_save_png = False
 
@@ -122,7 +123,11 @@ def run_thread_cam(rs_cam, which_cam):
         npy_list[which_cam][:len(image_)] = image_
         npy_len_list[which_cam] = len(image_)
 
-
+def safe_to_uint8(image: np.ndarray) -> np.ndarray:
+    if image.dtype == np.uint8:
+        return image
+    else:
+        return cv2.convertScaleAbs(image)
 
 def dh_transformation_matrix(theta, d, a, alpha):
     """
@@ -394,9 +399,12 @@ def main(args):
                     mk_dir(dp_save_dir)
 
                     # save img data to obs
-                    obs["base_rgb"] = img_list[0].astype(np.uint8)
-                    obs["left_wrist_rgb"] = img_list[1].astype(np.uint8)
-                    obs["right_wrist_rgb"] = img_list[2].astype(np.uint8)
+                    # obs["base_rgb"] = img_list[0].astype(np.uint8)
+                    # obs["left_wrist_rgb"] = img_list[1].astype(np.uint8)
+                    # obs["right_wrist_rgb"] = img_list[2].astype(np.uint8)
+                    obs["base_rgb"] = cv2.convertScaleAbs(img_list[0])
+                    obs["left_wrist_rgb"] = cv2.convertScaleAbs(img_list[1])
+                    obs["right_wrist_rgb"] = cv2.convertScaleAbs(img_list[2])
 
                     save_dp_frame(
                         dp_save_dir,

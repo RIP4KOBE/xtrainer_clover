@@ -30,7 +30,7 @@ def save_dp_frame(
     obs: Dict[str, np.ndarray],
     action: np.ndarray,
     activated=True,
-    save_png=False,
+        save_png=False,
 ) -> None:
     obs["activated"] = {}
     obs["activated"]["l"]  = activated
