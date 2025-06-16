@@ -6,6 +6,7 @@ import numpy as np
 
 from dobot_control.agents.agent import Agent
 from dobot_control.robots.dynamixel import DynamixelRobot
+from dobot_control.robots.dobot import DobotRobot
 import time
 import configparser
 import os
@@ -41,6 +42,7 @@ class DobotAgent(Agent):
     def __init__(
         self,
         which_hand: str,
+        robot_ip,
         dobot_config: Optional[DobotRobotConfig] = None,
         start_joints: Optional[np.ndarray] = None,
     ):
@@ -48,9 +50,19 @@ class DobotAgent(Agent):
         self.torque_enable = True
         assert dobot_config
         self._robot = dobot_config.make_robot(start_joints=start_joints)
+        self.dobot_robot = DobotRobot(robot_ip=robot_ip, robot_number=2)
 
     def act(self, obs: Dict[str, np.ndarray]) -> np.ndarray:
         return self._robot.get_joint_state()
+
+    def act_eef(self, obs: Dict[str, np.ndarray]) -> np.ndarray:
+        """Get the end effector pose."""
+        joint_actions = self._robot.get_joint_state()
+        if joint_actions is None or len(joint_actions) < 6:
+            raise RuntimeError("Invalid joint state array (length < 6)")
+        eef_pose = self.dobot_robot.get_fk(joint_actions[:6])
+        eef_actions = np.concatenate([eef_pose, joint_actions[-1]])
+        return eef_actions
 
     def set_torque(self, _flag = False):
         self._robot.set_torque_mode(_flag)

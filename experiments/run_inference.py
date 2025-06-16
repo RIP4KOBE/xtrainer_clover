@@ -17,6 +17,8 @@ from dobot_control.env import RobotEnv
 from dobot_control.robots.robot_node import ZMQClientRobot
 from dobot_control.cameras.realsense_camera import RealSenseCamera
 from dobot_control.agents.dp_agent import BimanualDPAgent
+from dobot_control.robots.dobot import DobotRobot
+from dobot_control.robots.robot import BimanualRobot, PrintRobot
 from ModelTrain.dp.utils import get_config
 from ModelTrain.dp.keypoint_proposer import KeypointProposer
 
@@ -39,6 +41,8 @@ class Args:
     dp_model = None
     act_model = None
     obj_correction = False
+    pred_eef_delta = True
+
 
 
 image_left,image_right,image_top,thread_run=None,None,None,None
@@ -85,8 +89,13 @@ def run_thread_cam(rs_cam, which_cam):
 
 def main(args):
 
+    # robot init
+    _robot_l = DobotRobot(robot_ip="192.168.5.1", robot_number=2)  # IP of the left hand robotic arm
+    _robot_r = DobotRobot(robot_ip="192.168.5.2", robot_number=2)  # IP of the rigth hand robotic arm
+    robot = BimanualRobot(_robot_l, _robot_r)
+
    # camera init
-    global image_left, image_right, image_top, thread_run, running
+    global image_left, image_right, image_top, thread_run, running, eef_delta
     thread_run=True
     camera_dict = load_ini_data_camera()
     rs1 = RealSenseCamera(flip=False, device_id=camera_dict["left"])
@@ -187,13 +196,14 @@ def main(args):
         observation['images']['right_wrist'] = image_right
         observation['images']['top'] = image_top
         if args.show_img:
-            imgs = np.hstack((observation['images']['left_wrist'],observation['images']['right_wrist'],observation['images']['top']))
+            imgs = np.hstack((observation['images']['left_wrist'],observation['images']['right_wrist'],observation[
+                'images']['top']))
             cv2.imshow("imgs",imgs)
             cv2.waitKey(1)
         time1 = time.time()
         # print("read images time(ms)：",(time1-time0)*1000)
 
-        # Model inference,output joint value (radian)
+        # Model inference,output joint value (radian) or eef pose value (pos+rotation vector)
         if args.agent_name == "dp":
             dp_observation = {'joint_positions': [], 'left_wrist_rgb': [], 'right_wrist_rgb': [], 'base_rgb': []}
             dp_observation['joint_positions'] = observation['qpos']
@@ -202,7 +212,15 @@ def main(args):
             dp_observation['base_rgb'] = image_top
 
             if mode == "diffusion":
-                action, _ = dp_model.act(dp_observation)  # Use planned trajectory
+                prediction, _ = dp_model.act(dp_observation)  # Use planned trajectory
+
+                if args.pred_eef_delta:
+                    eef_delta = prediction
+                    action = robot.get_joint_from_eef_delta(eef_delta, obs)
+                else:
+                    action = prediction
+
+
             elif mode == "modulate":
                 action, modulation_finished = dp_model.act(dp_observation, modulation=True,last_action = last_action)  # Use modulated trajectory
 
@@ -212,6 +230,7 @@ def main(args):
         # modulated_flag = dp_model.get_modulation_flag()
         # if modulated_flag:
         #     running = False
+
 
         # print("infer_action:",action)
         if action[6]>1:
@@ -292,7 +311,13 @@ def main(args):
 
         # Control robot movement
         time3 = time.time()
-        obs = env.step(action,np.array([1,1]))
+        if args.pred_eef_delta:
+            eef_action = robot.get_eef_action(eef_delta, obs)
+            obs = env.step_eef(eef_action, np.array([1, 1]))
+
+        else:
+            obs = env.step(action, np.array([1, 1]))
+
         time4 = time.time()
 
         # Obtain the current joint value of the robots (including the gripper)

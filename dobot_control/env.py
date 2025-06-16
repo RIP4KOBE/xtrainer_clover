@@ -62,6 +62,28 @@ class RobotEnv:
         return self.get_obs()
 
 
+    def step_eef(self, pose: np.ndarray, flag_in: np.ndarray) -> Dict[str, Any]:
+        """Step the environment forward.
+
+        Args:
+            pose: end effector pose command to step the environment with.
+            flag_in
+
+        Returns:
+            obs: observation from the environment.
+        """
+        assert len(pose) == (
+            self._robot.num_dofs()
+        ), f"input:{len(pose)}, robot:{self._robot.num_dofs()}"
+
+        tic = time.time()
+        self._robot.command_eef_state(pose, flag_in)
+        toc = time.time()
+
+        # print("command_joint_state", toc-tic)
+        return self.get_obs()
+
+
     def get_obs(self) -> Dict[str, Any]:
         """Get observation from the environment.
 

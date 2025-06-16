@@ -29,7 +29,8 @@ class Args:
     project_name = "assistive_dressing"
     agent_name = "dp"
     dp_save_png = False
-    handeye_calibration = True
+    handeye_calibration = False
+    act_eef = True
 
 # Thread button: [lock or nor, servo or not, record or not]
 # 0: lock, 1: unlock
@@ -40,6 +41,7 @@ dt_time = np.array([20240507161455])
 # dp_time = np.array([20240507161455])
 using_sensor = False
 is_falling = np.array([0])
+eef_action = np.zeros(6)
 
 def button_monitor_realtime(agent):
     # servo
@@ -123,8 +125,6 @@ def run_thread_cam(rs_cam, which_cam):
         npy_list[which_cam][:len(image_)] = image_
         npy_len_list[which_cam] = len(image_)
 
-
-
 def dh_transformation_matrix(theta, d, a, alpha):
     """
     Create the DH transformation matrix
@@ -171,7 +171,6 @@ def forward_kinematics(q0, q1, q2, q3, q4, q5, y):
     pos = t_final[:3, 3]
     return pos
 
-
 def calculate_vel_pos(action, last_action, total_time):
     """
     Calculate the velocity for forward kinematics
@@ -201,7 +200,6 @@ def is_within_safe_position(position, x_range, y_range, z_min):
     return x_range[0] <= position[0] <= x_range[1] and \
            y_range[0] <= position[1] <= y_range[1] and \
            position[2] > z_min
-
 
 def check_pose_protection(positions, vel, what_to_do):
     protect_err = False
@@ -272,9 +270,9 @@ def check_joint_safety(action):
         protect_err = True
     return protect_err
 
-
 def main(args):
     # create dataset file path
+    global eef_action
     save_dir = args.save_data_path+args.project_name+"/collect_data"
     mk_dir(save_dir)
 
@@ -299,8 +297,8 @@ def main(args):
 
     # agent init
     _, hands_dict = load_ini_data_hands()
-    left_agent = DobotAgent(which_hand="LEFT", dobot_config=hands_dict["HAND_LEFT"])
-    right_agent = DobotAgent(which_hand="RIGHT", dobot_config=hands_dict["HAND_RIGHT"])
+    left_agent = DobotAgent(which_hand="LEFT", robot_ip="192.168.5.1", dobot_config=hands_dict["HAND_LEFT"])
+    right_agent = DobotAgent(which_hand="RIGHT", robot_ip="192.168.5.2", dobot_config=hands_dict["HAND_RIGHT"])
     agent = BimanualAgent(left_agent, right_agent)
 
     # pose init
@@ -331,10 +329,11 @@ def main(args):
     while 1:
         tic = time.time()
 
-        # assert thread_cam_top.is_alive(), "Error: please check the top camera!"
+        assert thread_cam_top.is_alive(), "Error: please check the top camera!"
         assert thread_cam_left.is_alive(), "Error: please check the left camera!"
         assert thread_cam_right.is_alive(), "Error: please check the right camera!"
         assert not is_falling, "sensor   detection!"
+
 
         action = agent.act({})
         print(action)
@@ -369,7 +368,13 @@ def main(args):
                 set_light(env, "green", 0)
 
         if (what_to_do[0, 1] or what_to_do[1, 1]) and start_servo:
-            action = agent.act({})
+            # use eef action or joint action
+            if args.act_eef:
+                eef_action = agent.act_eef({})
+                action = agent.act({})
+            else:
+                action = agent.act({})
+
             err3, action = servo_action_check(action, last_action, flag_in)
             assert err3 != 0, set_light(env, "red", 1)
 
@@ -406,13 +411,23 @@ def main(args):
                     obs["left_wrist_rgb"] = img_list[1].astype(np.uint8)
                     obs["right_wrist_rgb"] = img_list[2].astype(np.uint8)
 
-                    save_dp_frame(
-                        dp_save_dir,
-                        dt,
-                        obs,
-                        action,
-                        save_png=args.dp_save_png,
-                    )
+                    if args.act_eef:
+                        save_dp_frame(
+                            dp_save_dir,
+                            dt,
+                            obs,
+                            eef_action,
+                            save_png=args.dp_save_png,
+                        )
+                    else:
+                        save_dp_frame(
+                            dp_save_dir,
+                            dt,
+                            obs,
+                            action,
+                            save_png=args.dp_save_png,
+                        )
+
 
                 # collect data for ACT
                 else:
@@ -433,7 +448,11 @@ def main(args):
                     cv2.imwrite(right_dir + f"{idx}.jpg", img_list[2])
                     save_frame(obs_dir, idx, obs, action)
 
-            obs = env.step(action, flag_in)
+            if args.act_eef:
+                obs = env.step_eef(eef_action, flag_in)
+            else:
+                obs = env.step(action, flag_in)
+
             obs["joint_positions"][6] = action[6]
             obs["joint_positions"][13] = action[13]
             last_action = action

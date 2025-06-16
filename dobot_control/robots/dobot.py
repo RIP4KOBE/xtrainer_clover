@@ -1,10 +1,12 @@
 from typing import Dict
 import numpy as np
 import time
+import quaternion
 from dobot_control.robots.robot import Robot
 import struct
 import sys
 from scripts.manipulate_utils import load_ini_data_hands, load_ini_data_gripper
+from scipy.spatial.transform import Rotation as R
 from scripts.manipulate_utils import robot_pose_init, pose_check, dynamic_approach, obs_action_check, \
     servo_action_check, load_ini_data_hands, set_light, load_ini_data_camera
 from threading import Event, Lock, Thread
@@ -112,6 +114,114 @@ class DobotRobot(Robot):
             pos = np.append(robot_joints, gripper_pos)
         return pos
 
+    def get_eef_pose(self) -> np.ndarray:
+        """Get the current pose of the leader robot's end effector.
+
+        Returns:
+            T: The current pose of the leader robot's end effector.
+        """
+        assert not self.robot_is_err, f"{self.robot_ip}: error!"
+        pos_rot = np.array(list(map(float, self.r_inter.GetPose().split("{")[1].split("}")[0].split(","
+                                                                                                    "")))) #
+        # 单位：位置:mm, 姿态:度数
+        pos = pos_rot[:3] / 1000
+        rot = R.from_euler('zyx', pos_rot[3:6], degrees=True).as_rotvec() # Convert zyx Euler angles to rotation vector
+        pos_rot = np.concatenate((pos, rot))  # [x, y, z, rx, ry, rz]
+
+        return pos_rot
+
+    def get_fk(self, joint_state) -> np.ndarray:
+        """Get the current forward kinematics state of the robot.
+
+        Returns:
+            T: The current forward kinematics state of the robot.
+        """
+        assert not self.robot_is_err, f"{self.robot_ip}: error!"
+        fk_sol = np.array(list(map(float, self.r_inter.PositiveSolution(
+            joint_state[0], joint_state[1], joint_state[2],
+            joint_state[3], joint_state[4], joint_state[5]
+        ,0,1).split("{")[1].split("}")[0].split(","))))
+        pos = fk_sol[:3] / 1000  # 单位：位置:mm, 姿态:度数
+        rot = R.from_euler('zyx', fk_sol[3:6], degrees=True).as_rotvec() # Convert zyx Euler angles to rotation vector
+        fk_sol = np.concatenate((pos, rot))  # [x, y, z, rx, ry, rz]
+
+        return fk_sol
+
+    def get_ik(self, eef_state: np.ndarray) -> np.ndarray:
+        """Get the current inverse kinematics state of the robot.
+
+        Args:
+            eef_state (np.ndarray): The end effector state to get the inverse kinematics for.
+
+        Returns:
+            T: The current inverse kinematics state of the robot.
+        """
+        assert not self.robot_is_err, f"{self.robot_ip}: error!"
+        pos = eef_state[:3] * 1000
+        rot = R.from_rotvec(eef_state[3:6]).as_euler('zyx', degrees=True)
+        ik_sol = np.array(list(map(float, self.r_inter.InverseSolution(
+            pos[0], pos[1], pos[2],
+            rot[0], rot[1], rot[2], 0, 1).split("{")[1].split("}")[0].split(","))))
+
+        return ik_sol
+
+
+    def get_eef_action(self, eef_delta: np.ndarray, obs: Dict[str, np.ndarray]) -> np.ndarray:
+        """Get the end effector action of the robot from the current observation.
+
+        Args:
+            eef_delta (np.ndarray): The eef_delta action to get the end effector action for.
+            obs (Dict[str, np.ndarray]): The current observation of the robot.
+
+        Returns:
+            np.ndarray: The end effector action of the robot.
+        """
+        assert not self.robot_is_err, f"{self.robot_ip}: error!"
+        assert "ee_pos_quat" in obs, "Observation must contain 'ee_pos_quat' key"
+        current_eef_pose = obs["ee_pos_quat"]
+        pos_delta = eef_delta[:3]
+        rot_delta = eef_delta[3:6]
+        pos = pos_delta[:3] + current_eef_pose[:3]
+        # quaternion multiplication
+        rot = quaternion.as_rotation_vector(
+            quaternion.from_rotation_vector(rot_delta)
+            * quaternion.from_rotation_vector(current_eef_pose[3:])
+        )
+        pos_rot = np.concatenate((pos, rot))  # [x, y, z, rx, ry, rz]
+        eef_action = np.concatenate((pos_rot, np.array(eef_delta[-1]))) # [x, y, z, rx, ry, rz, gripper_pos]
+
+        return eef_action
+
+    def get_joint_from_eef_delta(self, eef_delta: np.ndarray, obs: Dict[str, np.ndarray]) -> np.ndarray:
+        """Get the current joint action of the robot from the eef_delta action.
+
+        Args:
+            eef_delta (np.ndarray): The eef_delta action to get the joint action for.
+            obs (Dict[str, np.ndarray]): The current observation of the robot.
+
+        Returns:
+            T: The current joint action of the robot.
+        """
+        assert not self.robot_is_err, f"{self.robot_ip}: error!"
+        assert len(eef_delta) == 7, "eef_action must be of length 7 (6 for pose and 1 for gripper)"
+        # current_eef_pose = obs["ee_pos_quat"] # [x, y, z, rx, ry, rz]
+        # pos_delta = eef_delta[:3]
+        # rot_delta = eef_delta[3:6]
+        # pos = pos_delta[:3] + current_eef_pose[:3]
+        # # quaternion multiplication
+        # rot = quaternion.as_rotation_vector(
+        #     quaternion.from_rotation_vector(rot_delta)
+        #     * quaternion.from_rotation_vector(current_eef_pose[3:])
+        # )
+        # pos_rot = np.concatenate((pos, rot))  # [x, y, z, rx, ry, rz]
+        eef_action = self.get_eef_action(eef_delta, obs)  # [x, y, z, rx, ry, rz, gripper_pos]
+        ik_sol = self.get_ik(eef_action[:6]) # Get the inverse kinematics solution for the eef action
+        joint_action = np.concatenate((ik_sol, np.array(eef_action[-1])))
+
+        assert len(joint_action) == 7, "joint_action must be of length 7 (6 for joints and 1 for gripper)"
+
+        return joint_action
+
     def get_XYZrxryrz_state(self) -> np.ndarray:
         """Get the current X Y Z rx ry rz state of the robot.
         Returns:
@@ -120,6 +230,7 @@ class DobotRobot(Robot):
         assert not self.robot_is_err, f"{self.robot_ip}: error!"
         pos = list(map(float, self.r_inter.GetPose().split("{")[1].split("}")[0].split(",")))  # 单位：度数
         return pos
+
 
     def command_joint_state(self, joint_state: np.ndarray) -> None:
         """Command the leader robot to a given state.
@@ -140,6 +251,29 @@ class DobotRobot(Robot):
         if self._use_gripper:
             gripper_pos = int(joint_state[-1] * 255)
             self.gripper.move(gripper_pos, 100, 1)
+        return 1
+
+
+    def command_eef_state(self, eef_state: np.ndarray) -> None:
+        """Command the leader robot to a given state.
+
+        Args:
+            pose_state (np.ndarray): The state to command the leader robot to.
+        """
+        assert not self.robot_is_err, f"{self.robot_ip}: error!"
+
+        pos_rot = eef_state[:6] # 单位：位置:m, 姿态:rotation vevtor radians
+        pos = pos_rot[:3] * 1000
+        rot = R.from_rotvec(pos_rot[3:6]).as_euler('zyx', degrees=True)
+        pos_rot = np.concatenate((pos, rot))  # [x, y, z, rx, ry, rz]
+
+        self.robot.MovJ(pos_rot[0],pos_rot[1], pos_rot[2],
+                        pos_rot[3], pos_rot[4], pos_rot[5])
+
+        if self._use_gripper:
+            gripper_pos = int(eef_state[-1] * 255)
+            self.gripper.move(gripper_pos, 100, 1)
+
         return 1
 
     def moveJ(self, joint_state: np.ndarray) -> None:
@@ -193,20 +327,21 @@ class DobotRobot(Robot):
     def get_observations(self) -> Dict[str, np.ndarray]:
         assert not self.robot_is_err, f"{self.robot_ip}: error!"
         joints = self.get_joint_state()
-        pos_quat = np.zeros(7)
+        pos_rot= self.get_eef_pose()
         gripper_pos = np.array([joints[-1]])
         return {
             "joint_positions": joints,
             "joint_velocities": joints,
-            "ee_pos_quat": pos_quat,
+            "ee_pos_quat": pos_rot,  # TODO: this is pos_rot actually
             "gripper_position": gripper_pos,
         }
+
 
     def get_obs(self) -> Dict[str, np.ndarray]:
         # 获取关节状态
         joints = self.get_joint_state()
         # 初始化位置和四元数
-        pos_quat = np.zeros(7)
+        pos_quat = self.get_eef_pose()
         # 获取夹爪位置
         gripper_pos = np.array([joints[-1]])
         # 返回观测值

@@ -24,7 +24,7 @@ from torchvision import transforms
 from utils import WandBLogger, generate_random_string, get_eef_delta, save_args
 
 LEFT_XTRAINER_IDX = list(range(0, 6))
-RIGHT_XTRAINER_IDX = list(range(12, 18))
+RIGHT_XTRAINER_IDX = list(range(7, 13))
 # LEFT_HAND_IDX = list(range(6, 12))
 # RIGHT_HAND_IDX = list(range(18, 24))
 # GRIPPER_IDX = LEFT_HAND_IDX + RIGHT_HAND_IDX
@@ -782,7 +782,7 @@ if __name__ == "__main__":
 
     args.add_argument("--clip_far", type=boolean_string, default=False)
     args.add_argument("--color_jitter", type=boolean_string, default=False)
-    args.add_argument("--predict_eef_delta", type=boolean_string, default=False)
+    args.add_argument("--predict_eef_delta", type=boolean_string, default=True)
     args.add_argument("--predict_pos_delta", type=boolean_string, default=False)
     args.add_argument("--use_ddim", type=boolean_string, default=True)
 

@@ -28,6 +28,14 @@ class Robot(Protocol):
         """
         raise NotImplementedError
 
+    def get_eef_pose(self) -> np.ndarray:
+        """Get the current eef pose of the leader robot.
+
+        Returns:
+            T: The current eef pose of the leader robot.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     def command_joint_state(self, joint_state: np.ndarray, flag_in: np.ndarray) -> None:
         """Command the leader robot to a given state.
@@ -35,6 +43,17 @@ class Robot(Protocol):
         Args:
             flag_in:
             joint_state (np.ndarray): The state to command the leader robot to.
+        """
+        raise NotImplementedError
+
+
+    @abstractmethod
+    def command_eef_state(self, eef_state: np.ndarray, flag_in: np.ndarray) -> None:
+        """Command the leader robot to a given state.
+
+        Args:
+            flag_in:
+            eef_state (np.ndarray): The state to command the leader robot to.
         """
         raise NotImplementedError
 
@@ -130,6 +149,14 @@ class BimanualRobot(Robot):
             (self._robot_l.get_joint_state(), self._robot_r.get_joint_state())
         )
 
+    def get_eef_pose(self) -> np.ndarray:
+        assert not self._robot_l.robot_is_err, "left robot error!"
+        assert not self._robot_r.robot_is_err, "right robot error!"
+        return np.concatenate(
+            (self._robot_l.get_eef_pose(), self._robot_r.get_eef_pose())
+        )
+
+
     def command_joint_state(self, joint_state: np.ndarray, flag_in) -> None:
         t_start = time.time()
         assert not self._robot_l.robot_is_err, "left robot error!"
@@ -140,6 +167,20 @@ class BimanualRobot(Robot):
         # t_start1 = time.time()
         if flag_in[1]:
             self._robot_r.command_joint_state(joint_state[self._robot_l.num_dofs() :])
+        # t_start2 = time.time()
+        return 1
+
+
+    def command_eef_state(self, eef_state: np.ndarray, flag_in) -> None:
+        t_start = time.time()
+        assert not self._robot_l.robot_is_err, "left robot error!"
+        assert not self._robot_r.robot_is_err, "right robot error!"
+        # print("t_start:",t_start)
+        if flag_in[0]:
+            self._robot_l.command_eef_state(eef_state[: self._robot_l.num_dofs()])
+        # t_start1 = time.time()
+        if flag_in[1]:
+            self._robot_r.command_eef_state(eef_state[self._robot_l.num_dofs() :])
         # t_start2 = time.time()
         return 1
 
@@ -174,6 +215,22 @@ class BimanualRobot(Robot):
             (self._robot_l.get_XYZrxryrz_state(), self._robot_r.get_XYZrxryrz_state())
         )
 
+    def get_eef_action(self, eef_delta: np.ndarray, obs: Dict[str, np.ndarray]) -> np.ndarray:
+        """Get the end effector action from the end effector delta."""
+        assert not self._robot_l.robot_is_err, "left robot error!"
+        assert not self._robot_r.robot_is_err, "right robot error!"
+        l_eef_action = self._robot_l.get_eef_action(eef_delta[: self._robot_l.num_dofs()], obs)
+        r_eef_action = self._robot_r.get_eef_action(eef_delta[self._robot_l.num_dofs():], obs)
+        return np.concatenate((l_eef_action, r_eef_action))
+
+
+    def get_joint_from_eef_delta(self, eef_delta: np.ndarray, obs: Dict[str, np.ndarray]) -> np.ndarray:
+        """Get the joint state from the end effector state."""
+        assert not self._robot_l.robot_is_err, "left robot error!"
+        assert not self._robot_r.robot_is_err, "right robot error!"
+        l_joint_action = self._robot_l.get_joint_from_eef_delta(eef_delta[: self._robot_l.num_dofs()], obs)
+        r_joint_action = self._robot_r.get_joint_from_eef_delta(eef_delta[self._robot_l.num_dofs():], obs)
+        return np.concatenate((l_joint_action, r_joint_action))
 def main():
     pass
 
