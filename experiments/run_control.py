@@ -368,6 +368,7 @@ def main(args):
                 set_light(env, "green", 0)
 
         if (what_to_do[0, 1] or what_to_do[1, 1]) and start_servo:
+
             # use eef action or joint action
             if args.act_eef:
                 eef_action = agent.act_eef({})

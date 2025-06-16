@@ -28,6 +28,7 @@ class Robot(Protocol):
         """
         raise NotImplementedError
 
+    @abstractmethod
     def get_eef_pose(self) -> np.ndarray:
         """Get the current eef pose of the leader robot.
 
@@ -35,6 +36,22 @@ class Robot(Protocol):
             T: The current eef pose of the leader robot.
         """
         raise NotImplementedError
+
+    @abstractmethod
+    def get_eef_action(self, eef_delta: np.ndarray, obs: Dict[str, np.ndarray]) -> np.ndarray:
+        """Get the current eef action of the leader robot.
+
+        Returns:
+            T: The current eef action of the leader robot.
+        """
+        raise NotImplementedError
+
+    def get_joint_from_eef_delta(self, eef_delta: np.ndarray, obs: Dict[str, np.ndarray]) -> np.ndarray:
+        """Get the joint action from the end effector delta."""
+
+        raise NotImplementedError("This method should be implemented in the robot class.")
+
+
 
     @abstractmethod
     def command_joint_state(self, joint_state: np.ndarray, flag_in: np.ndarray) -> None:
