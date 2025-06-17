@@ -344,9 +344,6 @@ class DiffusionPolicy:
                         wandb_logger.log({"Normalized_MSE": normalized_mse})
                     print(f"Action_MSE: {mse}, Normalized_MSE: {normalized_mse}")
                     self.ema_nets.train()
-                    return None
-                return None
-            return None
 
     def train_cfg(
         self,
@@ -601,9 +598,6 @@ class DiffusionPolicy:
                         wandb_logger.log({"Normalized_MSE": normalized_mse})
                     print(f"Action_MSE: {mse}, Normalized_MSE: {normalized_mse}")
                     self.ema_nets.train()
-                    return None
-                return None
-            return None
 
     def eval(self, obs, action):
         obs_deque = collections.deque(

@@ -132,8 +132,8 @@ def split_symlink_dataset(root, num_trajs):
 
 if __name__ == "__main__":
     arg = argparse.ArgumentParser()
-    arg.add_argument("--base_path", type=str, default="/home/zhuoli/dobot_xtrainer/datasets/dp_plate_wiping_20250610")
-    arg.add_argument("--output_path", type=str, default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data/dp_plate_wiping_20250610")
+    arg.add_argument("--base_path", type=str, default="/home/zhuoli/dobot_xtrainer/datasets/dp_plate_wiping_eef_delta_20250617")
+    arg.add_argument("--output_path", type=str, default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data/dp_plate_wiping_eef_delta_20250617")
     arg.add_argument(
         "--data_name",
         nargs="+",
