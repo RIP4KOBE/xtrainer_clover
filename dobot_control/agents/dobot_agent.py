@@ -1,12 +1,14 @@
 import os
 from dataclasses import dataclass
 from typing import Dict, Optional, Sequence, Tuple
+from scipy.spatial.transform import Rotation as R
 
 import numpy as np
 
 from dobot_control.agents.agent import Agent
 from dobot_control.robots.dynamixel import DynamixelRobot
 from dobot_control.robots.dobot import DobotRobot
+from scripts.manipulate_utils import forward_kinematics, claw_width
 import time
 import configparser
 import os
@@ -42,7 +44,7 @@ class DobotAgent(Agent):
     def __init__(
         self,
         which_hand: str,
-        robot_ip,
+        dobot_robot: Optional[DobotRobot] = None,
         dobot_config: Optional[DobotRobotConfig] = None,
         start_joints: Optional[np.ndarray] = None,
     ):
@@ -50,7 +52,7 @@ class DobotAgent(Agent):
         self.torque_enable = True
         assert dobot_config
         self._robot = dobot_config.make_robot(start_joints=start_joints)
-        self.dobot_robot = DobotRobot(robot_ip=robot_ip, robot_number=2)
+        self.dobot_robot = dobot_robot
 
     def act(self, obs: Dict[str, np.ndarray]) -> np.ndarray:
         return self._robot.get_joint_state()
@@ -60,9 +62,18 @@ class DobotAgent(Agent):
         joint_actions = self._robot.get_joint_state()
         if joint_actions is None or len(joint_actions) < 6:
             raise RuntimeError("Invalid joint state array (length < 6)")
+
+        # coef = 1 if self.which_hand == 'LEFT' else -1
+        # claw = claw_width(joint_actions[-1])
+        # claw *= coef
+        # pos, rot = forward_kinematics(*joint_actions[:6], claw)
+        # rot = R.from_matrix(rot).as_rotvec()
+        # eef_action = np.concatenate((pos,rot, [joint_actions[-1]]))
+
         eef_pose = self.dobot_robot.get_fk(joint_actions[:6])
-        eef_actions = np.concatenate([eef_pose, joint_actions[-1]])
-        return eef_actions
+        eef_action = np.concatenate([eef_pose, [joint_actions[-1]]])
+        print("eef_action for action saving", eef_action)
+        return eef_action
 
     def set_torque(self, _flag = False):
         self._robot.set_torque_mode(_flag)

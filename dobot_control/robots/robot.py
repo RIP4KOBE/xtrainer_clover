@@ -46,6 +46,7 @@ class Robot(Protocol):
         """
         raise NotImplementedError
 
+    @abstractmethod
     def get_joint_from_eef_delta(self, eef_delta: np.ndarray, obs: Dict[str, np.ndarray]) -> np.ndarray:
         """Get the joint action from the end effector delta."""
 
@@ -178,13 +179,10 @@ class BimanualRobot(Robot):
         t_start = time.time()
         assert not self._robot_l.robot_is_err, "left robot error!"
         assert not self._robot_r.robot_is_err, "right robot error!"
-        # print("t_start:",t_start)
         if flag_in[0]:
             self._robot_l.command_joint_state(joint_state[: self._robot_l.num_dofs()])
-        # t_start1 = time.time()
         if flag_in[1]:
             self._robot_r.command_joint_state(joint_state[self._robot_l.num_dofs() :])
-        # t_start2 = time.time()
         return 1
 
 
@@ -192,7 +190,7 @@ class BimanualRobot(Robot):
         t_start = time.time()
         assert not self._robot_l.robot_is_err, "left robot error!"
         assert not self._robot_r.robot_is_err, "right robot error!"
-        # print("t_start:",t_start)
+        print("test1-command_eef_state t_start:",t_start)
         if flag_in[0]:
             self._robot_l.command_eef_state(eef_state[: self._robot_l.num_dofs()])
         # t_start1 = time.time()

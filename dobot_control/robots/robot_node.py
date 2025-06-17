@@ -69,6 +69,14 @@ class ZMQServerRobot:
                     result = self._robot.set_do_status(**args)
                 elif method == "get_XYZrxryrz_state":
                     result = self._robot.get_XYZrxryrz_state()
+                elif method == "get_eef_pose":
+                    result = self._robot.get_eef_pose()
+                elif method == "get_eef_action":
+                    result = self._robot.get_eef_action(**args)
+                elif method == "get_joint_from_eef_delta":
+                    result = self._robot.get_joint_from_eef_delta(**args)
+                elif method == "command_eef_state":
+                    result = self._robot.command_eef_state(**args)
                 else:
                     result = {"error": "Invalid method"}
                     print(result)
@@ -78,7 +86,8 @@ class ZMQServerRobot:
 
                 self._socket.send(pickle.dumps(result))
             except zmq.Again:
-                print(self._timout_message)
+                # print(self._timout_message)
+                pass
                 # Timeout occurred, check if the stop event is set
 
     def stop(self) -> None:
@@ -118,6 +127,52 @@ class ZMQClientRobot(Robot):
         result = pickle.loads(self._socket.recv())
         return result
 
+
+    def get_eef_pose(self) -> np.ndarray:
+        """Get the current eef pose of the leader robot.
+
+        Returns:
+            T: The current eef pose of the leader robot.
+        """
+        request = {"method": "get_eef_pose"}
+        send_message = pickle.dumps(request)
+        self._socket.send(send_message)
+        result = pickle.loads(self._socket.recv())
+        return result
+
+    def get_eef_action(self, eef_delta: np.ndarray, obs: Dict[str, np.ndarray]) -> np.ndarray:
+        """Get the current eef action of the leader robot.
+
+        Returns:
+            T: The current eef action of the leader robot.
+        """
+        request = {
+            "method": "get_eef_action",
+            "args": {"eef_delta": eef_delta,
+                     "obs": obs},
+        }
+        send_message = pickle.dumps(request)
+        self._socket.send(send_message)
+        result = pickle.loads(self._socket.recv())
+        return result
+
+
+    def get_joint_from_eef_delta(self, eef_delta: np.ndarray, obs: Dict[str, np.ndarray]) -> np.ndarray:
+        """Get the current eef action of the leader robot.
+
+        Returns:
+            T: The current eef action of the leader robot.
+        """
+        request = {
+            "method": "get_joint_from_eef_delta",
+            "args": {"eef_delta": eef_delta,
+                     "obs": obs},
+        }
+        send_message = pickle.dumps(request)
+        self._socket.send(send_message)
+        result = pickle.loads(self._socket.recv())
+        return result
+
     def command_joint_state(self, joint_state: np.ndarray, flag_in) -> None:
         """Command the leader robot to the given state.
 
@@ -136,6 +191,26 @@ class ZMQClientRobot(Robot):
         result = pickle.loads(self._socket.recv())
         end = time.time()
         t = end-start
+        return result
+
+    def command_eef_state(self, eef_state: np.ndarray, flag_in) -> None:
+        """Command the leader robot to the given eef state.
+
+              Args:
+                  eef_state (T): The state to command the leader robot to.
+                  flag_in
+              """
+        request = {
+            "method": "command_eef_state",
+            "args": {"eef_state": eef_state,
+                     "flag_in": flag_in},
+        }
+        send_message = pickle.dumps(request)
+        start = time.time()
+        self._socket.send(send_message)
+        result = pickle.loads(self._socket.recv())
+        end = time.time()
+        t = end - start
         return result
 
     def get_observations(self) -> Dict[str, np.ndarray]:

@@ -13,9 +13,12 @@ from scripts.format_obs import save_frame, save_dp_frame
 from dobot_control.env import RobotEnv
 from dobot_control.robots.robot_node import ZMQClientRobot
 from scripts.function_util import mismatch_data_write, wait_period, log_write, mk_dir
-from scripts.manipulate_utils import robot_pose_init, pose_check, dynamic_approach, obs_action_check, servo_action_check, load_ini_data_hands, set_light, load_ini_data_camera
+from scripts.manipulate_utils import robot_pose_init, pose_check, dynamic_approach, obs_action_check, servo_action_check, load_ini_data_hands, set_light, load_ini_data_camera, claw_width, forward_kinematics, dh_transformation_matrix
 from dobot_control.agents.dobot_agent import DobotAgent
 from dobot_control.cameras.realsense_camera import RealSenseCamera
+from dobot_control.robots.dobot import DobotRobot
+from dobot_control.robots.robot import BimanualRobot, PrintRobot
+from dobot_control.robots.robot_node import ZMQServerRobot
 import datetime
 from pathlib import Path
 
@@ -26,7 +29,7 @@ class Args:
     show_img: bool = False
     # save_data_path = "/media/zhuoli/5HYSSD/xtrainer/datasets/manidp_experiments/"
     save_data_path = "/media/zhuoli/8ECE-77DB/xtrainer/Datasets/DP/"
-    project_name = "assistive_dressing"
+    project_name = "dp_plate_wiping_eef_delta_20250617"
     agent_name = "dp"
     dp_save_png = False
     handeye_calibration = False
@@ -125,52 +128,6 @@ def run_thread_cam(rs_cam, which_cam):
         npy_list[which_cam][:len(image_)] = image_
         npy_len_list[which_cam] = len(image_)
 
-def dh_transformation_matrix(theta, d, a, alpha):
-    """
-    Create the DH transformation matrix
-    """
-    cos_theta = np.cos(theta)
-    sin_theta = np.sin(theta)
-    cos_alpha = np.cos(alpha)
-    sin_alpha = np.sin(alpha)
-    return np.array([
-        [cos_theta, -sin_theta * cos_alpha, sin_theta * sin_alpha, a * cos_theta],
-        [sin_theta, cos_theta * cos_alpha, -cos_theta * sin_alpha, a * sin_theta],
-        [0, sin_alpha, cos_alpha, d],
-        [0, 0, 0, 1]
-    ])
-
-def claw_width(coef):
-    """
-    Calculate the claw width
-    """
-    claw_servo = 2.3818 - coef * 1.5401
-    cos_claw_servo = np.cos(claw_servo)
-    claw_wid = 0.03 * cos_claw_servo + 0.5 * np.sqrt(0.0036 * cos_claw_servo ** 2 + 0.0028)
-    return claw_wid
-
-def forward_kinematics(q0, q1, q2, q3, q4, q5, y):
-    """
-    Compute the forward kinematics
-    """
-    dh_params = [
-        (q0, 0.2234, 0, np.pi / 2),
-        (q1 - np.pi / 2, 0, -0.280, 0),
-        (q2, 0, -0.225, 0),
-        (q3 - np.pi / 2, 0.1175, 0, np.pi / 2),
-        (q4, 0.120, 0, -np.pi / 2),
-        (q5, 0.088, 0, 0)
-    ]
-
-    t = np.eye(4)
-    for params in dh_params:
-        t = np.dot(t, dh_transformation_matrix(*params))
-    t_tool = np.eye(4)
-    t_tool[:3, 3] = np.array([0, y, 0.2])
-    t_final = np.dot(t, t_tool)
-    pos = t_final[:3, 3]
-    return pos
-
 def calculate_vel_pos(action, last_action, total_time):
     """
     Calculate the velocity for forward kinematics
@@ -187,8 +144,8 @@ def calculate_vel_pos(action, last_action, total_time):
             claw = claw_left if side == 'left' else claw_right
             claw *= coef
 
-            current_fk = forward_kinematics(*action[0:6] if side == 'left' else action[7:13], claw)
-            last_fk = forward_kinematics(*last_action[0:6] if side == 'left' else last_action[7:13], claw)
+            current_fk, _ = forward_kinematics(*action[0:6] if side == 'left' else action[7:13], claw)
+            last_fk, _ = forward_kinematics(*last_action[0:6] if side == 'left' else last_action[7:13], claw)
 
             positions[f'{side}_{paw}'] = current_fk
             vel[f'{side}_{paw}'] = (current_fk - last_fk) / total_time
@@ -270,7 +227,22 @@ def check_joint_safety(action):
         protect_err = True
     return protect_err
 
+
+def launch_robot_server(args):
+    port = args.robot_port
+    _robot_l = DobotRobot(robot_ip="192.168.5.1", robot_number=2)
+    _robot_r = DobotRobot(robot_ip="192.168.5.2", robot_number=2)
+    robot = BimanualRobot(_robot_l, _robot_r)
+    server = ZMQServerRobot(robot, port=port, host=args.hostname)
+    print(f"Starting robot server on port {port}")
+    server_thread = threading.Thread(target=server.serve, daemon=True)
+    server_thread.start()
+    return _robot_l, _robot_r
+
 def main(args):
+    # launch robot server
+    dobot_robot_l, dobot_robot_r = launch_robot_server(args)
+
     # create dataset file path
     global eef_action
     save_dir = args.save_data_path+args.project_name+"/collect_data"
@@ -297,8 +269,8 @@ def main(args):
 
     # agent init
     _, hands_dict = load_ini_data_hands()
-    left_agent = DobotAgent(which_hand="LEFT", robot_ip="192.168.5.1", dobot_config=hands_dict["HAND_LEFT"])
-    right_agent = DobotAgent(which_hand="RIGHT", robot_ip="192.168.5.2", dobot_config=hands_dict["HAND_RIGHT"])
+    left_agent = DobotAgent(which_hand="LEFT", dobot_robot=dobot_robot_l, dobot_config=hands_dict["HAND_LEFT"])
+    right_agent = DobotAgent(which_hand="RIGHT", dobot_robot=dobot_robot_r, dobot_config=hands_dict["HAND_RIGHT"])
     agent = BimanualAgent(left_agent, right_agent)
 
     # pose init
@@ -369,12 +341,13 @@ def main(args):
 
         if (what_to_do[0, 1] or what_to_do[1, 1]) and start_servo:
 
-            # use eef action or joint action
+            # use joint action
+            action = agent.act({})
+
+            # use eef action
             if args.act_eef:
                 eef_action = agent.act_eef({})
-                action = agent.act({})
-            else:
-                action = agent.act({})
+                # print("collect eef action: ", eef_action)
 
             err3, action = servo_action_check(action, last_action, flag_in)
             assert err3 != 0, set_light(env, "red", 1)
@@ -449,11 +422,13 @@ def main(args):
                     cv2.imwrite(right_dir + f"{idx}.jpg", img_list[2])
                     save_frame(obs_dir, idx, obs, action)
 
-            if args.act_eef:
-                obs = env.step_eef(eef_action, flag_in)
-            else:
-                obs = env.step(action, flag_in)
+            # if args.act_eef:
+            #     # obs = env.step_eef(eef_action, flag_in)
+            #     obs = env.step(action, flag_in)
+            # else:
+            #     obs = env.step(action, flag_in)
 
+            obs = env.step(action, flag_in)
             obs["joint_positions"][6] = action[6]
             obs["joint_positions"][13] = action[13]
             last_action = action
