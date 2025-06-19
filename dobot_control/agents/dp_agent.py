@@ -146,6 +146,7 @@ class BimanualDPAgent:
             action_horizon=dp_args["action_horizon"],
             without_sampling=dp_args["without_sampling"],
             predict_eef_delta=dp_args["predict_eef_delta"],
+            predict_eef_6d=dp_args["predict_eef_6d"],
             predict_pos_delta=dp_args["predict_pos_delta"],
             use_ddim=dp_args["use_ddim"],
         )
@@ -159,6 +160,7 @@ class BimanualDPAgent:
         self.binaraize_finger_action = binarize_finger_action
         self.clip_far = dp_args["clip_far"]
         self.predict_eef_delta = dp_args["predict_eef_delta"]
+        self.predict_eef_6d = dp_args["predict_eef_6d"]
         self.predict_pos_delta = dp_args["predict_pos_delta"]
         assert not (self.predict_eef_delta and self.predict_pos_delta)
         self.control = get_reset_joints(ur_eef=self.predict_eef_delta)
@@ -188,6 +190,7 @@ class BimanualDPAgent:
             "without_sampling": False,
             "clip_far": False,
             "predict_eef_delta": False,
+            "predict_eef_6d": False,
             "predict_pos_delta": False,
             "use_ddim": True,
         }

@@ -814,7 +814,7 @@ if __name__ == "__main__":
     args.add_argument("--clip_far", type=boolean_string, default=False)
     args.add_argument("--color_jitter", type=boolean_string, default=False)
     args.add_argument("--predict_eef_delta", type=boolean_string, default=False)
-    args.add_argument("--predict_eef_6d", type=boolean_string, default=True)
+    args.add_argument("--predict_eef_6d", type=boolean_string, default=False)
     args.add_argument("--predict_pos_delta", type=boolean_string, default=False)
     args.add_argument("--use_ddim", type=boolean_string, default=True)
 

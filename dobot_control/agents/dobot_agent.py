@@ -72,7 +72,7 @@ class DobotAgent(Agent):
 
         eef_pose = self.dobot_robot.get_fk(joint_actions[:6])
         eef_action = np.concatenate([eef_pose, [joint_actions[-1]]])
-        print("eef_action for action saving", eef_action)
+        # print("eef_action for action saving", eef_action)
         return eef_action
 
     def set_torque(self, _flag = False):

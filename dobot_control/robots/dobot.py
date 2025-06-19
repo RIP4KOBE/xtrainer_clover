@@ -169,7 +169,7 @@ class DobotRobot(Robot):
         return joint_state
 
 
-    def get_eef_action(self, eef_delta: np.ndarray, obs: Dict[str, np.ndarray]) -> np.ndarray:
+    def get_eef_action(self, eef_delta: np.ndarray, obs: np.ndarray) -> np.ndarray:
         """Get the end effector action of the robot from the current observation.
 
         Args:
@@ -180,8 +180,8 @@ class DobotRobot(Robot):
             np.ndarray: The end effector action of the robot.
         """
         assert not self.robot_is_err, f"{self.robot_ip}: error!"
-        assert "ee_pos_quat" in obs, "Observation must contain 'ee_pos_quat' key"
-        current_eef_pose = obs["ee_pos_quat"]
+        # assert "ee_pos_quat" in obs, "Observation must contain 'ee_pos_quat' key"
+        current_eef_pose = obs[:6]
         pos_delta = eef_delta[:3]
         rot_delta = eef_delta[3:6]
         pos = pos_delta[:3] + current_eef_pose[:3]
@@ -191,11 +191,11 @@ class DobotRobot(Robot):
             * quaternion.from_rotation_vector(current_eef_pose[3:])
         )
         pos_rot = np.concatenate((pos, rot))  # [x, y, z, rx, ry, rz]
-        eef_action = np.concatenate((pos_rot, np.array(eef_delta[-1]))) # [x, y, z, rx, ry, rz, gripper_pos]
+        eef_action = np.concatenate((pos_rot, [eef_delta[-1]])) # [x, y, z, rx, ry, rz, gripper_pos]
 
         return eef_action
 
-    def get_joint_from_eef_delta(self, eef_delta: np.ndarray, obs: Dict[str, np.ndarray]) -> np.ndarray:
+    def get_joint_from_eef_delta(self, eef_delta: np.ndarray, obs: np.ndarray) -> np.ndarray:
         """Get the current joint action of the robot from the eef_delta action.
 
         Args:
@@ -219,7 +219,7 @@ class DobotRobot(Robot):
         # pos_rot = np.concatenate((pos, rot))  # [x, y, z, rx, ry, rz]
         eef_action = self.get_eef_action(eef_delta, obs)  # [x, y, z, rx, ry, rz, gripper_pos]
         ik_sol = self.get_ik(eef_action[:6]) # Get the inverse kinematics solution for the eef action
-        joint_action = np.concatenate((ik_sol, np.array(eef_action[-1])))
+        joint_action = np.concatenate((ik_sol, [eef_action[-1]]))
 
         assert len(joint_action) == 7, "joint_action must be of length 7 (6 for joints and 1 for gripper)"
 
@@ -241,6 +241,7 @@ class DobotRobot(Robot):
         Args:
             joint_state (np.ndarray): The state to command the leader robot to.
         """
+        t_start = time.time()
         assert not self.robot_is_err, f"{self.robot_ip}: error!"
         robot_joints_angle = joint_state[:6]  # 单位：弧�?
         robot_joints = [np.rad2deg(robot_joint) for robot_joint in robot_joints_angle]
@@ -254,6 +255,9 @@ class DobotRobot(Robot):
         if self._use_gripper:
             gripper_pos = int(joint_state[-1] * 255)
             self.gripper.move(gripper_pos, 100, 1)
+
+        t_end = time.time()
+        # print(f"command_joint_state耗时: {(t_end - t_start) * 1000:.2f}ms")
         return 1
 
 
@@ -264,12 +268,14 @@ class DobotRobot(Robot):
             pose_state (np.ndarray): The state to command the leader robot to.
         """
         assert not self.robot_is_err, f"{self.robot_ip}: error!"
-
+        t_start = time.time()
         pos_rot = eef_state[:6] # 单位：位置:m, 姿态:rotation vevtor radians
         # print("dobot single arm eef state:", pos_rot)
+
         pos = pos_rot[:3] * 1000
         rot = R.from_rotvec(pos_rot[3:6]).as_euler('xyz', degrees=True)
         pos_rot = np.concatenate((pos, rot))  # [x, y, z, rx, ry, rz]
+        t_after_conversion = time.time()
         # print("start command_eef_state:", pos_rot)
 
         self.robot.ServoP(pos_rot[0],pos_rot[1], pos_rot[2],
@@ -278,6 +284,11 @@ class DobotRobot(Robot):
         if self._use_gripper:
             gripper_pos = int(eef_state[-1] * 255)
             self.gripper.move(gripper_pos, 100, 1)
+
+        t_end = time.time()
+
+        # print(f"rotation转换耗时: {(t_after_conversion - t_start) * 1000:.2f}ms")
+        # print(f"command_eef_state耗时: {(t_end - t_start) * 1000:.2f}ms")
 
         return 1
 
@@ -334,7 +345,7 @@ class DobotRobot(Robot):
         joints = self.get_joint_state()
         pos_rot= self.get_eef_pose()
         gripper_pos = np.array([joints[-1]])
-        print("ee_pos_quat for obs saving:", pos_rot)
+        # print("ee_pos_quat for obs saving:", pos_rot)
         return {
             "joint_positions": joints,
             "joint_velocities": joints,
@@ -374,32 +385,35 @@ def main():
     dobot.set_do_status([2, 0])
     dobot.set_do_status([3, 0])
 
-    joint_state = np.array([76, -15, 79, -6, -100, -88, 1.0])
-    robot_joints_angle = joint_state[:6]  # ��λ������
-    robot_joints = [np.deg2rad(robot_joint) for robot_joint in robot_joints_angle]
+    eef_pose = dobot.get_eef_pose()
+    print("eef_pose:", eef_pose)
 
-    print("joint_radians:", robot_joints)
+    # joint_state = np.array([76, -15, 79, -6, -100, -88, 1.0])
+    # robot_joints_angle = joint_state[:6]  # ��λ������
+    # robot_joints = [np.deg2rad(robot_joint) for robot_joint in robot_joints_angle]
+    #
+    # print("joint_radians:", robot_joints)
 
     # fk via forward kinematics function
-    coef = 1 # right hand
-    claw = claw_width(joint_state[-1])
-    claw *= coef
-    pos, rot = forward_kinematics(*robot_joints, claw)
-    pos = pos * 1000  # Convert mm to m
-    rot = R.from_matrix(rot).as_euler('xyz', degrees=True)
-    eef_state = np.concatenate((pos, rot, [joint_state[-1]]))
+    # coef = 1 # right hand
+    # claw = claw_width(joint_state[-1])
+    # claw *= coef
+    # pos, rot = forward_kinematics(*robot_joints, claw)
+    # pos = pos * 1000  # Convert mm to m
+    # rot = R.from_matrix(rot).as_euler('xyz', degrees=True)
+    # eef_state = np.concatenate((pos, rot, [joint_state[-1]]))
 
     # fk via dobot api
     # eef_state = dobot.get_fk(joint_state)
     # eef_state = np.concatenate((eef_state, [joint_state[-1]]))
-    print("eef_state for testing:", eef_state)
+    # print("eef_state for testing:", eef_state)
 
-    # dobot.command_joint_state(joint_state)eef_state
+    # dobot.command_joint_state(joint_state)
     # pos_rot = dobot.get_eef_pose()
     # print("get_eef_pose:", pos_rot)
 
     # eef_state = np.array([-27, -383, 415, 170, -32, -105, 1.0])
-    dobot.command_eef_state(eef_state)
+    # dobot.command_eef_state(eef_state)
 
 
 

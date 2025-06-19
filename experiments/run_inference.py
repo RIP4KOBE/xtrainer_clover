@@ -16,11 +16,16 @@ from pynput import keyboard
 from dobot_control.env import RobotEnv
 from dobot_control.robots.robot_node import ZMQClientRobot
 from dobot_control.cameras.realsense_camera import RealSenseCamera
+from dobot_control.robots.robot_node import ZMQServerRobot
 from dobot_control.agents.dp_agent import BimanualDPAgent
 from dobot_control.robots.dobot import DobotRobot
 from dobot_control.robots.robot import BimanualRobot, PrintRobot
 from ModelTrain.dp.utils import get_config
 from ModelTrain.dp.keypoint_proposer import KeypointProposer
+from experiments.run_control import launch_robot_server
+from ModelTrain.dp.utils import sixd_to_rotation_vector
+
+
 
 
 from scripts.manipulate_utils import load_ini_data_camera
@@ -35,13 +40,14 @@ class Args:
     show_img: bool = True
     agent_name: str = "dp"
     act_ckpt_path: str = "./ckpt/act/tidying_up_bowls_abcefg_mix_0925"
-    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_cfg_plate_wipping_UnconditionalTraining_20250408/last.ckpt"
-    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_bimanual_handover_20250425/last.ckpt"
-    dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_cfg_plate_wipping_20250402/last.ckpt"
+    dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_absolute_6d_normalization_20250619/last.ckpt"
+    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_absolute_6d_20250618/last.ckpt"
     dp_model = None
     act_model = None
     obj_correction = False
-    pred_eef_delta = True
+    pred_eef_delta = False
+    pred_eef_absolute = False
+    pred_eef_absolute_6d = True
 
 
 
@@ -89,13 +95,11 @@ def run_thread_cam(rs_cam, which_cam):
 
 def main(args):
 
-    # robot init
-    _robot_l = DobotRobot(robot_ip="192.168.5.1", robot_number=2)  # IP of the left hand robotic arm
-    _robot_r = DobotRobot(robot_ip="192.168.5.2", robot_number=2)  # IP of the rigth hand robotic arm
-    robot = BimanualRobot(_robot_l, _robot_r)
+    # launch the robot server
+    dobot_robot_l, dobot_robot_r, dobot_robot = launch_robot_server(args)
 
    # camera init
-    global image_left, image_right, image_top, thread_run, running, eef_delta
+    global image_left, image_right, image_top, thread_run, running, eef_delta, eef_action
     thread_run=True
     camera_dict = load_ini_data_camera()
     rs1 = RealSenseCamera(flip=False, device_id=camera_dict["left"])
@@ -216,7 +220,36 @@ def main(args):
 
                 if args.pred_eef_delta:
                     eef_delta = prediction
-                    action = robot.get_joint_from_eef_delta(eef_delta, obs)
+                    action = dobot_robot.get_joint_from_eef_delta(eef_delta, obs)
+                elif args.pred_eef_absolute:
+                    eef_action = prediction
+                    joint_state = dobot_robot.get_ik(eef_action)
+                    joint_state_l = joint_state[:6]
+                    joint_state_r = joint_state[6:12]
+                    action=np.concatenate((joint_state_l, [eef_action[6]], joint_state_r, [eef_action[13]]))
+                elif args.pred_eef_absolute_6d:
+
+                    # get eef_action_rotvec from eef_action_6d
+                    eef_action_6d = prediction
+                    eef_action_6d_left_pos = eef_action_6d[:3]
+                    eef_action_6d_left_rot = eef_action_6d[3:9]
+                    eef_action_6d_left_gripper = eef_action_6d[9]
+                    eef_action_6d_right_pos = eef_action_6d[10:13]
+                    eef_action_6d_right_rot = eef_action_6d[13:19]
+                    eef_action_6d_right_gripper = eef_action_6d[19]
+
+                    left_rotvec = sixd_to_rotation_vector(eef_action_6d_left_rot)
+                    right_rotvec = sixd_to_rotation_vector(eef_action_6d_right_rot)
+
+                    eef_action = np.concatenate((eef_action_6d_left_pos, left_rotvec, [eef_action_6d_left_gripper], eef_action_6d_right_pos, right_rotvec, [eef_action_6d_right_gripper]))
+
+                    # compute joint action for safety check
+                    joint_state = dobot_robot.get_ik(eef_action)
+                    joint_state_l = joint_state[:6]
+                    joint_state_r = joint_state[6:12]
+                    action = np.concatenate((joint_state_l, [eef_action[6]], joint_state_r, [eef_action[13]]))
+
+
                 else:
                     action = prediction
 
@@ -312,9 +345,12 @@ def main(args):
         # Control robot movement
         time3 = time.time()
         if args.pred_eef_delta:
-            eef_action = robot.get_eef_action(eef_delta, obs)
-            obs = env.step_eef(eef_action, np.array([1, 1]))
-
+            eef_action = dobot_robot.get_eef_action(eef_delta, obs["ee_pos_quat"])
+            # obs = env.step_eef(eef_action, np.array([1, 1]))
+            obs = env.step(action, np.array([1, 1]))
+        elif args.pred_eef_absolute or args.pred_eef_absolute_6d:
+            # obs = env.step_eef(eef_action, np.array([1, 1]))
+            obs = env.step(action, np.array([1, 1]))
         else:
             obs = env.step(action, np.array([1, 1]))
 

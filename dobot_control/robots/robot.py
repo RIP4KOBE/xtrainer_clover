@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import Dict, Protocol
+from typing import Dict, Protocol, Union
 
 import numpy as np
 import time
@@ -38,7 +38,7 @@ class Robot(Protocol):
         raise NotImplementedError
 
     @abstractmethod
-    def get_eef_action(self, eef_delta: np.ndarray, obs: Dict[str, np.ndarray]) -> np.ndarray:
+    def get_eef_action(self, eef_delta: np.ndarray, obs: Union[Dict[str, np.ndarray], np.ndarray]) -> np.ndarray:
         """Get the current eef action of the leader robot.
 
         Returns:
@@ -47,7 +47,7 @@ class Robot(Protocol):
         raise NotImplementedError
 
     @abstractmethod
-    def get_joint_from_eef_delta(self, eef_delta: np.ndarray, obs: Dict[str, np.ndarray]) -> np.ndarray:
+    def get_joint_from_eef_delta(self, eef_delta: np.ndarray, obs: Union[Dict[str, np.ndarray], np.ndarray]) -> np.ndarray:
         """Get the joint action from the end effector delta."""
 
         raise NotImplementedError("This method should be implemented in the robot class.")
@@ -106,6 +106,14 @@ class Robot(Protocol):
             T: The current X Y Z rx ry rz state of the leader robot.
         """
         raise NotImplementedError
+
+    def get_ik(self, eef_action: np.ndarray):
+        """Get the ik solution of the leader robot.
+        """
+
+        raise NotImplementedError("This method should be implemented in the robot class.")
+
+
 
 
 class PrintRobot(Robot):
@@ -174,6 +182,13 @@ class BimanualRobot(Robot):
             (self._robot_l.get_eef_pose(), self._robot_r.get_eef_pose())
         )
 
+    def get_ik(self, eef_action: np.ndarray) -> np.ndarray:
+        assert not self._robot_l.robot_is_err, "left robot error!"
+        assert not self._robot_r.robot_is_err, "right robot error!"
+        return np.concatenate(
+            (self._robot_l.get_ik(eef_action[:6]), self._robot_r.get_ik(eef_action[7:13]))
+        )
+
 
     def command_joint_state(self, joint_state: np.ndarray, flag_in) -> None:
         t_start = time.time()
@@ -190,13 +205,10 @@ class BimanualRobot(Robot):
         t_start = time.time()
         assert not self._robot_l.robot_is_err, "left robot error!"
         assert not self._robot_r.robot_is_err, "right robot error!"
-        print("test1-command_eef_state t_start:",t_start)
         if flag_in[0]:
             self._robot_l.command_eef_state(eef_state[: self._robot_l.num_dofs()])
-        # t_start1 = time.time()
         if flag_in[1]:
             self._robot_r.command_eef_state(eef_state[self._robot_l.num_dofs() :])
-        # t_start2 = time.time()
         return 1
 
     def get_observations(self) -> Dict[str, np.ndarray]:
@@ -234,8 +246,8 @@ class BimanualRobot(Robot):
         """Get the end effector action from the end effector delta."""
         assert not self._robot_l.robot_is_err, "left robot error!"
         assert not self._robot_r.robot_is_err, "right robot error!"
-        l_eef_action = self._robot_l.get_eef_action(eef_delta[: self._robot_l.num_dofs()], obs)
-        r_eef_action = self._robot_r.get_eef_action(eef_delta[self._robot_l.num_dofs():], obs)
+        l_eef_action = self._robot_l.get_eef_action(eef_delta[: self._robot_l.num_dofs()], obs[: self._robot_l.num_dofs()-1])
+        r_eef_action = self._robot_r.get_eef_action(eef_delta[self._robot_l.num_dofs():], obs[self._robot_l.num_dofs()-1:])
         return np.concatenate((l_eef_action, r_eef_action))
 
 
@@ -243,8 +255,8 @@ class BimanualRobot(Robot):
         """Get the joint state from the end effector state."""
         assert not self._robot_l.robot_is_err, "left robot error!"
         assert not self._robot_r.robot_is_err, "right robot error!"
-        l_joint_action = self._robot_l.get_joint_from_eef_delta(eef_delta[: self._robot_l.num_dofs()], obs)
-        r_joint_action = self._robot_r.get_joint_from_eef_delta(eef_delta[self._robot_l.num_dofs():], obs)
+        l_joint_action = self._robot_l.get_joint_from_eef_delta(eef_delta[: self._robot_l.num_dofs()], obs["ee_pos_quat"][: self._robot_l.num_dofs()-1])
+        r_joint_action = self._robot_r.get_joint_from_eef_delta(eef_delta[self._robot_l.num_dofs():], obs["ee_pos_quat"][self._robot_l.num_dofs()-1:])
         return np.concatenate((l_joint_action, r_joint_action))
 def main():
     pass

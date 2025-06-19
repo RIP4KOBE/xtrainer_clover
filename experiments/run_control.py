@@ -27,9 +27,9 @@ class Args:
     robot_port: int = 6001
     hostname: str = "127.0.0.1"
     show_img: bool = False
-    # save_data_path = "/media/zhuoli/5HYSSD/xtrainer/datasets/manidp_experiments/"
     save_data_path = "/media/zhuoli/8ECE-77DB/xtrainer/Datasets/DP/"
-    project_name = "dp_plate_wiping_eef_delta_20250617"
+    # project_name = "dp_plate_wiping_eef_delta_20250617"
+    project_name = "dp_eef_action_test"
     agent_name = "dp"
     dp_save_png = False
     handeye_calibration = False
@@ -237,11 +237,11 @@ def launch_robot_server(args):
     print(f"Starting robot server on port {port}")
     server_thread = threading.Thread(target=server.serve, daemon=True)
     server_thread.start()
-    return _robot_l, _robot_r
+    return _robot_l, _robot_r, robot
 
 def main(args):
     # launch robot server
-    dobot_robot_l, dobot_robot_r = launch_robot_server(args)
+    dobot_robot_l, dobot_robot_r, _ = launch_robot_server(args)
 
     # create dataset file path
     global eef_action
@@ -422,13 +422,13 @@ def main(args):
                     cv2.imwrite(right_dir + f"{idx}.jpg", img_list[2])
                     save_frame(obs_dir, idx, obs, action)
 
-            # if args.act_eef:
-            #     # obs = env.step_eef(eef_action, flag_in)
-            #     obs = env.step(action, flag_in)
-            # else:
-            #     obs = env.step(action, flag_in)
+            if args.act_eef:
+                # obs = env.step_eef(eef_action, flag_in)
+                obs = env.step(action, flag_in)
+            else:
+                obs = env.step(action, flag_in)
 
-            obs = env.step(action, flag_in)
+            # obs = env.step(action, flag_in)
             obs["joint_positions"][6] = action[6]
             obs["joint_positions"][13] = action[13]
             last_action = action

@@ -58,7 +58,7 @@ class RobotEnv:
         self._robot.command_joint_state(joints, flag_in)
         toc = time.time()
 
-        # print("command_joint_state", toc-tic)
+        print("command_joint_state", toc-tic)
         return self.get_obs()
 
 
@@ -80,7 +80,7 @@ class RobotEnv:
         self._robot.command_eef_state(pose, flag_in)
         toc = time.time()
 
-        # print("command_joint_state", toc-tic)
+        print("command_eef_state", toc-tic)
         return self.get_obs()
 
 

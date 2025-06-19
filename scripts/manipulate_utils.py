@@ -181,6 +181,58 @@ def dynamic_approach(env, agent, flag_in):
     return action1
 
 
+# def dynamic_approach(env, agent, flag_in, max_delta=1.0, min_steps=10):
+#     """安全版的动态逼近函数
+#
+#     Args:
+#         max_delta: 最大允许关节差值（弧度）
+#         min_steps: 最小插值步数
+#     """
+#     # # 1. 硬件状态预检
+#     # if flag_in[0] and env.robot_left.robot_is_err:
+#     #     raise RuntimeError("Left arm not ready")
+#     # if flag_in[1] and env.robot_right.robot_is_err:
+#     #     raise RuntimeError("Right arm not ready")
+#
+#     # 2. 位姿安全检查
+#     err1, action1 = pose_check(env, agent, flag_in)
+#     if not err1:
+#         set_light(env, "red", 1)
+#         return None
+#
+#     # 3. 准备插值
+#     obs = env.get_obs()
+#     joints = obs["joint_positions"].copy()  # 避免修改原数据
+#     joints[[6, 13]] = action1[[6, 13]]  # 夹爪同步
+#
+#     # 4. 计算安全步数
+#     deltas = np.abs(action1 - joints)
+#     if flag_in[0] and not flag_in[1]:
+#         deltas = deltas[:6]
+#     elif not flag_in[0] and flag_in[1]:
+#         deltas = deltas[7:13]
+#
+#     abs_deltas = np.clip(deltas.max(), 0, max_delta)
+#     steps = max(min_steps, int(abs_deltas / 0.005))
+#
+#     # 5. 执行插值运动
+#     for jnt in np.linspace(joints, action1, steps):
+#         try:
+#             # # 实时状态检查
+#             # if flag_in[0] and env.robot_left.robot_is_err:
+#             #     raise RuntimeError("Left arm error during motion")
+#             # if flag_in[1] and env.robot_right.robot_is_err:
+#             #     raise RuntimeError("Right arm error during motion")
+#             tic = time.time()
+#             env.step(jnt, flag_in)
+#             wait_period(50, tic)
+#         except Exception as e:
+#             print(f"Motion interrupted: {str(e)}")
+#             set_light(env, "yellow", 1)  # 黄灯警告
+#             return None
+#
+#     return action1
+
 def dh_transformation_matrix(theta, d, a, alpha):
     """
     Create the DH transformation matrix
