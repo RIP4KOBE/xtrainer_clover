@@ -283,6 +283,9 @@ class Agent:
         # </editor-fold>
 
         # <editor-fold desc="Initializes the diffusion policy network">
+        self.predict_eef_delta = predict_eef_delta
+        self.predict_eef_6d = predict_eef_6d
+
         self.policy = DiffusionPolicy(
             obs_horizon=obs_horizon,
             obs_dim=obs_dim,
@@ -296,6 +299,7 @@ class Agent:
             weight_decay=weight_decay,
             use_ddim=use_ddim,
             binarize_touch=self.binarize_touch,
+            predict_eef_6d=self.predict_eef_6d,
             policy_dropout_rate=policy_dropout_rate,
         )
 
@@ -310,9 +314,6 @@ class Agent:
         self.obs_deque = None
         self.threshold = 8000
         self.state_noise = state_noise
-
-        self.predict_eef_delta = predict_eef_delta
-        self.predict_eef_6d = predict_eef_6d
         # </editor-fold>
 
     def _get_image_observation(self, data):
@@ -545,6 +546,7 @@ class Agent:
             transform=self.transform if not eval else self.eval_transform,
             get_img=self._get_image_observation,
             binarize_touch=self.binarize_touch,
+            predict_eef_6d=self.predict_eef_6d,
             state_noise=self.state_noise if not eval else 0.0,
         )
         dataloader = torch.utils.data.DataLoader(
@@ -806,7 +808,8 @@ if __name__ == "__main__":
                               "/collect_data")
     args.add_argument("--data_prefix", type=str, default=None)
     args.add_argument("--model_save_path", type=str,
-                      default="/home/zhuoli/dobot_xtrainer/model/dp_plate_wiping_eef_absolute_6d_20250618")
+                      default="/home/zhuoli/dobot_xtrainer/model"
+                              "/dp_plate_wiping_eef_absolute_6d_normalization_20250619")
 
     args.add_argument("--clip_far", type=boolean_string, default=False)
     args.add_argument("--color_jitter", type=boolean_string, default=False)

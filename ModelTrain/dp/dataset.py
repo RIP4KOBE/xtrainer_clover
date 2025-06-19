@@ -16,6 +16,9 @@ from ModelTrain.dp.bimanual_motion_prior.sampler import (
 from ModelTrain.dp.bimanual_motion_prior.normalizer import LinearNormalizer, QuatSafeNormalizer
 import data_processing
 
+LEFT_ARM_6D_INDICES = slice(0, 10)
+RIGHT_ARM_6D_INDICES = slice(10, 20)
+
 def create_sample_indices(
     episode_ends: np.ndarray,
     sequence_length: int,
@@ -90,11 +93,135 @@ def normalize_data(data, stats):
     return ndata
 
 
+def normalize_6d_pose(pose, stats):
+    """
+        Batch normalization for dual-arm pose data (shape [batch_size, 20])
+
+        Args:
+            pose: Input dual-arm pose data (left 10D + right 10D)
+            stats: Precomputed statistics dictionary containing min/max/mean etc.
+
+        Returns:
+            Normalized pose data with same shape as input
+        """
+
+    assert pose.shape[1] == 20, "Input should be 20 dimensional dual-arm data"
+
+    # Initialize output array
+    normalized = np.zeros_like(pose)
+
+    # Process both arms using same normalization logic
+    for arm_slice in [LEFT_ARM_6D_INDICES, RIGHT_ARM_6D_INDICES]:
+        arm_data = pose[:, arm_slice]
+        arm_stats_min = stats["min"][arm_slice]  # shape (10,)
+        arm_stats_max = stats["max"][arm_slice]  # shape (10,)
+
+        # Position dimensions (first 3 dims per arm)
+        pos_indices = slice(0, 3)
+        pos_data = arm_data[:, pos_indices]
+        pos_stats = {
+            "min": arm_stats_min[pos_indices],  # 只取前3维min
+            "max": arm_stats_max[pos_indices]  # 只取前3维max
+        }
+        normalized_pos = normalize_data(pos_data, pos_stats)
+
+        # Rotation dimensions (dims 3-8 per arm)
+        rot_indices = slice(3, 9)
+        rot_data = arm_data[:, rot_indices]
+        normalized_rot = rot_data
+
+        # Gripper dimension (last dim per arm)
+        gripper_index = 9
+        gripper_data = arm_data[:, gripper_index]
+        gripper_stats = {
+            "min": arm_stats_min[gripper_index],
+            "max": arm_stats_max[gripper_index]
+        }
+        normalized_gripper = normalize_data(gripper_data, gripper_stats)
+
+        # Combine normalized components
+        normalized[:, arm_slice] = np.hstack([
+            normalized_pos,
+            normalized_rot,
+            normalized_gripper.reshape(-1, 1)  # Ensure gripper is 2D
+        ])
+
+    # normalized = np.zeros_like(pose)
+    # for i in range(len(pose)):
+    #     if (stats["max"][i] - stats["min"][i]) < 1e-6:  # 零方差情况
+    #         normalized[i] = pose[i] - stats["mean"][i]
+    #     elif 3 <= i < len(pose)-1:    # 6D旋转维度（假设前3维是位置）
+    #         normalized[i] = pose[i]  # 不归一化
+    #     else:  # 位置维度+gripper维度
+    #         normalized[i] = normalize_data(pose[i], stats)
+    return normalized
+
+
 def unnormalize_data(ndata, stats):
     ndata = (ndata + 1) / 2
     data = ndata * (stats["max"] - stats["min"] + 1e-8) + stats["min"]
     return data
 
+
+def unnormalize_6d_pose(normalized, stats):
+    """
+        Batch denormalization for dual-arm pose data (shape [batch_size, 20])
+
+        Args:
+            normalized: Normalized pose data to be denormalized
+            stats: Same statistics dictionary used for normalization
+
+        Returns:
+            Denormalized pose data in original scale
+        """
+    assert normalized.shape[1] == 20, "Input should be 20D normalized data"
+
+    original = np.zeros_like(normalized)
+
+    for arm_slice in [LEFT_ARM_6D_INDICES, RIGHT_ARM_6D_INDICES]:
+        norm_arm = normalized[:, arm_slice]
+        arm_stats_min = stats["min"][arm_slice]  # shape (10,)
+        arm_stats_max = stats["max"][arm_slice]  # shape (10,)
+
+        # Position denormalization
+        pos_indices = slice(0, 3)
+        norm_pos = norm_arm[:, pos_indices]
+        pos_stats = {
+            "min": arm_stats_min[pos_indices],  # 只取前3维min
+            "max": arm_stats_max[pos_indices]  # 只取前3维max
+        }
+        original_pos = unnormalize_data(norm_pos, pos_stats)
+
+        # Rotation denormalization
+        rot_indices = slice(3, 9)
+        original_rot = norm_arm[:, rot_indices]  # no change for rotation
+
+        # Gripper denormalization
+        gripper_index = 9
+        norm_gripper = norm_arm[:, gripper_index]
+        gripper_stats = {
+            "min": arm_stats_min[gripper_index],
+            "max": arm_stats_max[gripper_index]
+        }
+        original_gripper = unnormalize_data(norm_gripper, gripper_stats)
+
+        original[:, arm_slice] = np.hstack([
+            original_pos,
+            original_rot,
+            original_gripper.reshape(-1, 1)  # Ensure gripper is 2D
+        ])
+
+    return original
+
+    # original = np.zeros_like(normalized)
+    # for i in range(len(normalized)):
+    #     if (stats["max"][i] - stats["min"][i]) < 1e-6:
+    #         original[i] = normalized[i] + stats["mean"][i]
+    #     elif 3 <= i < len(normalized)-1:
+    #         original[i] = normalized[i]
+    #     else:
+    #         original[i] = unnormalize_data(normalized[i], stats)
+    # return original
 
 class MemmapLoader:
     def __init__(self, path):
@@ -143,6 +270,7 @@ class Dataset(torch.utils.data.Dataset):
         load_img: bool = False,
         hand_grip_range: int = 110,
         binarize_touch: bool = False,
+        predict_eef_6d: bool = False,
         state_noise: float = 0.0,
     ):
         self.state_noise = state_noise
@@ -184,13 +312,20 @@ class Dataset(torch.utils.data.Dataset):
             for key, data in train_data.items():
                 stats[key] = get_data_stats(data)
 
+        # normalize the training data
         for key, data in train_data.items():
-            if key == "touch" and binarize_touch:
-                normalized_train_data[key] = (
-                    data  # don't normalize if binarize touch in model
-                )
+            if predict_eef_6d:
+                if key == "action":
+                    normalized_train_data[key] = normalize_6d_pose(data, stats[key])
+                else:
+                    normalized_train_data[key] = normalize_data(data, stats[key])
             else:
-                normalized_train_data[key] = normalize_data(data, stats[key])
+                if key == "touch" and binarize_touch:
+                    normalized_train_data[key] = (
+                        data  # don't normalize if binarize touch in model
+                    )
+                else:
+                    normalized_train_data[key] = normalize_data(data, stats[key])
 
         # images are already normalized
         if "img" in representation_type:

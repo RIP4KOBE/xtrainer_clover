@@ -27,21 +27,22 @@ from keypoint_proposer import KeypointProposer
 
 from ModelTrain.dp.bimanual_motion_prior.normalizer import LinearNormalizer, QuatSafeNormalizer
 from ModelTrain.dp.bimanual_motion_prior.mask_generator import LowdimMaskGenerator
+from ModelTrain.dp.dataset import normalize_6d_pose, unnormalize_6d_pose, normalize_data, unnormalize_data
 
 
 
-def normalize_data(data, stats):
-    # nomalize to [0,1]
-    ndata = (data - stats["min"]) / ((stats["max"] - stats["min"]) + 1e-8)
-    # normalize to [-1, 1]
-    ndata = ndata * 2 - 1
-    return ndata
-
-
-def unnormalize_data(ndata, stats):
-    ndata = (ndata + 1) / 2
-    data = ndata * (stats["max"] - stats["min"] + 1e-8) + stats["min"]
-    return data
+# def normalize_data(data, stats):
+#     # nomalize to [0,1]
+#     ndata = (data - stats["min"]) / ((stats["max"] - stats["min"]) + 1e-8)
+#     # normalize to [-1, 1]
+#     ndata = ndata * 2 - 1
+#     return ndata
+#
+#
+# def unnormalize_data(ndata, stats):
+#     ndata = (ndata + 1) / 2
+#     data = ndata * (stats["max"] - stats["min"] + 1e-8) + stats["min"]
+#     return data
 
 
 class DiffusionPolicy:
@@ -59,6 +60,7 @@ class DiffusionPolicy:
         weight_decay=1e-6,
         use_ddim=True,
         binarize_touch=False,
+        predict_eef_6d=False,
         policy_dropout_rate=0.0,
     ):
         for rt in representation_type:
@@ -74,6 +76,7 @@ class DiffusionPolicy:
         self.writer = None
         self.without_sampling = without_sampling
         self.binarize_touch = binarize_touch
+        self.predict_eef_6d = predict_eef_6d
 
         if self.without_sampling:
             bc_actor = SimpleBCModel(
@@ -276,14 +279,25 @@ class DiffusionPolicy:
 
                                 loss = nn.functional.mse_loss(naction, pred_action)
 
-                                unnormalized_naction = unnormalize_data(
-                                    naction.detach().cpu().numpy(),
-                                    self.data_stat["action"],
-                                )
-                                unnormalized_pred_action = unnormalize_data(
-                                    pred_action.detach().cpu().numpy(),
-                                    self.data_stat["action"],
-                                )
+                                # unnormalize the actions for evaluation
+                                if self.predict_eef_6d:
+                                    unnormalized_naction = unnormalize_6d_pose(
+                                        naction.detach().cpu().numpy(),
+                                        self.data_stat["action"],
+                                    )
+                                    unnormalized_pred_action = unnormalize_6d_pose(
+                                        pred_action.detach().cpu().numpy(),
+                                        self.data_stat["action"],
+                                    )
+                                else:
+                                    unnormalized_naction = unnormalize_data(
+                                        naction.detach().cpu().numpy(),
+                                        self.data_stat["action"],
+                                    )
+                                    unnormalized_pred_action = unnormalize_data(
+                                        pred_action.detach().cpu().numpy(),
+                                        self.data_stat["action"],
+                                    )
                                 unnormalized_loss = nn.functional.mse_loss(
                                     torch.tensor(unnormalized_naction),
                                     torch.tensor(unnormalized_pred_action),
@@ -619,8 +633,16 @@ class DiffusionPolicy:
             torch.tensor(actions_pred), torch.tensor(action[: len(actions_pred)])
         )
 
-        normalized_action = normalize_data(action, self.data_stat["action"])
-        normalized_action_pred = normalize_data(actions_pred, self.data_stat["action"])
+        # normalize the actions
+        if self.predict_eef_6d:
+            # normalize 6D pose
+            normalized_action = normalize_6d_pose(action, self.data_stat["action"])
+            normalized_action_pred = normalize_6d_pose(
+                actions_pred, self.data_stat["action"]
+            )
+        else:
+            normalized_action = normalize_data(action, self.data_stat["action"])
+            normalized_action_pred = normalize_data(actions_pred, self.data_stat["action"])
 
         normalized_mse = mse_loss(
             torch.tensor(normalized_action_pred),
@@ -764,7 +786,11 @@ class DiffusionPolicy:
         naction = naction.detach().to("cpu").numpy()
         # (B, pred_horizon, action_dim)
         naction = naction[0]
-        action_pred = unnormalize_data(naction, stats=stats["action"])
+        if self.predict_eef_6d:
+            # unnormalize 6D pose
+            action_pred = unnormalize_6d_pose(naction, stats=stats["action"])
+        else:
+            action_pred = unnormalize_data(naction, stats=stats["action"])
 
         # only take action_horizon number of actions
         start = self.obs_horizon - 1
