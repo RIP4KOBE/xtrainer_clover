@@ -58,6 +58,30 @@ def get_eef_delta(eef_pose, eef_pose_target):
     return np.concatenate((pos_delta, rot_delta))
 
 
+def rotation_vector_to_sixd(rot_vec):
+    """Convert 3D rotation vector to 6D rotation representation."""
+    rot_mat = R.from_rotvec(rot_vec).as_matrix()
+    return rot_mat[:, :2].flatten()  # [R11, R21, R31, R12, R22, R32]
+
+
+def sixd_to_rotation_vector(sixd):
+    """Convert 6D rotation representation to 3D rotation vector using SciPy."""
+    sixd = np.array(sixd).reshape(3, 2)
+    a1, a2 = sixd[:, 0], sixd[:, 1]
+
+    # Gram-Schmidt orthogonalization
+    b1 = a1 / np.linalg.norm(a1)
+    b2 = a2 - np.dot(b1, a2) * b1
+    b2 = b2 / np.linalg.norm(b2)
+    b3 = np.cross(b1, b2)
+
+    rot_mat = np.column_stack([b1, b2, b3])
+
+    # Convert rotation matrix to rotation vector using SciPy
+    rot = R.from_matrix(rot_mat)
+    rot_vec = rot.as_rotvec()
+    return rot_vec
+
 class Timer(object):
     def __init__(self):
         self._time = None

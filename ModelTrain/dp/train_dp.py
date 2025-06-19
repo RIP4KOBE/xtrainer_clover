@@ -21,7 +21,7 @@ from ModelTrain.dp.models import GaussianNoise, ImageEncoder, StateEncoder
 from torch import nn
 from torch.nn import ModuleList
 from torchvision import transforms
-from utils import WandBLogger, generate_random_string, get_eef_delta, save_args
+from utils import WandBLogger, generate_random_string, get_eef_delta, save_args, rotation_vector_to_sixd
 
 LEFT_XTRAINER_IDX = list(range(0, 6))
 RIGHT_XTRAINER_IDX = list(range(7, 13))
@@ -33,7 +33,7 @@ RT_DIM = {
     "hand_pos": 2,
     "pos": 14,
     "touch": 60,
-    "action": 14,
+    "action": 20,
 }
 TEST_INPUT = {
     "joint_positions": torch.zeros(14),
@@ -64,7 +64,7 @@ class Agent:
             "pos": 0.0,
             "touch": 0.0,
         },
-        action_dim=14,
+        action_dim=20,
         camera_indices=[0, 1, 2],
         representation_type=["eef", "hand_pos", "img", "touch", "depth"],
         pred_horizon=4,
@@ -73,6 +73,7 @@ class Agent:
         identity_encoder=False,
         without_sampling=False,
         predict_eef_delta=False,
+        predict_eef_6d=False,
         predict_pos_delta=False,
         clip_far=False,
         color_jitter=False,
@@ -311,6 +312,7 @@ class Agent:
         self.state_noise = state_noise
 
         self.predict_eef_delta = predict_eef_delta
+        self.predict_eef_6d = predict_eef_6d
         # </editor-fold>
 
     def _get_image_observation(self, data):
@@ -652,6 +654,29 @@ class Agent:
             act = [d["control"] for d in data]
             act = np.diff(act, axis=0, append=act[-1:])
             return act
+        elif self.predict_eef_6d:
+            # TODO: make sure this is only used when "control" is eef pose
+            act = []
+            for d in data:
+                lef_act_pos = d["control"][:3]
+                lef_act_rot = d["control"][3:6]
+                left_gripper_act = d["control"][6]
+                right_act_pos = d["control"][7:10]
+                right_act_rot = d["control"][10:13]
+                right_gripper_act = d["control"][13]
+
+                # Convert rotation vector to 6D representation
+                lef_act_rot_6d = rotation_vector_to_sixd(lef_act_rot)
+                right_act_rot_6d = rotation_vector_to_sixd(right_act_rot)
+
+                act.append(
+                    np.concatenate(
+                        [lef_act_pos, lef_act_rot_6d, [left_gripper_act], right_act_pos, right_act_rot_6d,
+                         [right_gripper_act]],
+                        axis=-1,
+                    )
+                )
+            return act
         else:
             return [d["control"] for d in data]
 
@@ -780,11 +805,13 @@ if __name__ == "__main__":
                       default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data/dp_plate_wiping_eef_delta_20250617"
                               "/collect_data")
     args.add_argument("--data_prefix", type=str, default=None)
-    args.add_argument("--model_save_path", type=str, default="/home/zhuoli/dobot_xtrainer/model/dp_plate_wiping_eef_delta_20250617")
+    args.add_argument("--model_save_path", type=str,
+                      default="/home/zhuoli/dobot_xtrainer/model/dp_plate_wiping_eef_absolute_6d_20250618")
 
     args.add_argument("--clip_far", type=boolean_string, default=False)
     args.add_argument("--color_jitter", type=boolean_string, default=False)
-    args.add_argument("--predict_eef_delta", type=boolean_string, default=True)
+    args.add_argument("--predict_eef_delta", type=boolean_string, default=False)
+    args.add_argument("--predict_eef_6d", type=boolean_string, default=True)
     args.add_argument("--predict_pos_delta", type=boolean_string, default=False)
     args.add_argument("--use_ddim", type=boolean_string, default=True)
 
@@ -812,13 +839,13 @@ if __name__ == "__main__":
     args.add_argument("--eval_freq", type=int, default=10)
 
     args.add_argument("--add_model_save_path_suffix", type=boolean_string, default=True)
-    args.add_argument("--use_wandb", type=boolean_string, default=False)
+    args.add_argument("--use_wandb", type=boolean_string, default=True)
     args.add_argument("--without_sampling", type=boolean_string, default=False)
     args.add_argument("--binarize_touch", type=boolean_string, default=False)
 
     # model config
     args.add_argument("--num_diffusion_iters", type=int, default=100)
-    args.add_argument("--wandb_exp_name", type=str, default=None)
+    args.add_argument("--wandb_exp_name", type=str, default="dp_eef_action_training_test")
     args.add_argument("--load_img", type=boolean_string, default=False)
     args.add_argument("--train_suffix", type=str, default="")
 
@@ -829,7 +856,7 @@ if __name__ == "__main__":
 
     # wandb config
     args.add_argument("--wandb_entity_name", type=str, default=None)
-    args.add_argument("--wandb_project_name", type=str, default=None)
+    args.add_argument("--wandb_project_name", type=str, default="Zero-Shot Bimanual Skill Adaptation via Language Correction")
     args = args.parse_args()
 
     if args.gpu is not None:
@@ -878,6 +905,7 @@ if __name__ == "__main__":
         action_horizon=args.action_horizon,
         without_sampling=args.without_sampling,
         predict_eef_delta=args.predict_eef_delta,
+        predict_eef_6d=args.predict_eef_6d,
         predict_pos_delta=args.predict_pos_delta,
         clip_far=args.clip_far,
         color_jitter=args.color_jitter,
@@ -935,6 +963,8 @@ if __name__ == "__main__":
                 args_str += "-posdelta"
             if args.predict_eef_delta:
                 args_str += "-eefdelta"
+            if args.predict_eef_6d:
+                args_str += "-eef6d"
             model_path_suffix += "-" + args_str
         model_path = os.path.join(model_path, model_path_suffix)
 
