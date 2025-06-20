@@ -74,6 +74,7 @@ class Agent:
         without_sampling=False,
         predict_eef_delta=False,
         predict_eef_6d=False,
+        predict_eef_6d_delta=False,
         predict_pos_delta=False,
         clip_far=False,
         color_jitter=False,
@@ -285,6 +286,7 @@ class Agent:
         # <editor-fold desc="Initializes the diffusion policy network">
         self.predict_eef_delta = predict_eef_delta
         self.predict_eef_6d = predict_eef_6d
+        self.predict_eef_6d_delta = predict_eef_6d_delta
 
         self.policy = DiffusionPolicy(
             obs_horizon=obs_horizon,
@@ -634,19 +636,19 @@ class Agent:
             # TODO: make sure this is only used when "control" is eef pose
             act = []
             for d in data:
-                left_arm_act = get_eef_delta(
+                left_act_delta = get_eef_delta(
                     d["ee_pos_quat"][:6], d["control"][LEFT_XTRAINER_IDX]
                 )
                 # left_gripper_act = d["gripper_position"][0]
                 left_gripper_act = d["control"][6]
-                right_arm_act = get_eef_delta(
+                right_act_delta = get_eef_delta(
                     d["ee_pos_quat"][6:], d["control"][RIGHT_XTRAINER_IDX]
                 )
                 # right_gripper_act = d["gripper_position"][1]
                 right_gripper_act = d["control"][13]
                 act.append(
                     np.concatenate(
-                        [left_arm_act, [left_gripper_act], right_arm_act, [right_gripper_act]],
+                        [left_act_delta, [left_gripper_act], right_act_delta, [right_gripper_act]],
                         axis=-1,
                     )
                 )
@@ -656,7 +658,7 @@ class Agent:
             act = [d["control"] for d in data]
             act = np.diff(act, axis=0, append=act[-1:])
             return act
-        elif self.predict_eef_6d:
+        elif self.predict_eef_6d and not self.predict_eef_6d_delta:
             # TODO: make sure this is only used when "control" is eef pose
             act = []
             for d in data:
@@ -674,6 +676,36 @@ class Agent:
                 act.append(
                     np.concatenate(
                         [lef_act_pos, lef_act_rot_6d, [left_gripper_act], right_act_pos, right_act_rot_6d,
+                         [right_gripper_act]],
+                        axis=-1,
+                    )
+                )
+            return act
+        elif self.predict_eef_6d and self.predict_eef_6d_delta:
+            # TODO: make sure this is only used when "control" is eef pose
+            act = []
+            for d in data:
+                left_act_delta = get_eef_delta(
+                    d["ee_pos_quat"][:6], d["control"][LEFT_XTRAINER_IDX]
+                )
+                left_gripper_act = d["control"][6]
+                right_act_delta = get_eef_delta(
+                    d["ee_pos_quat"][6:], d["control"][RIGHT_XTRAINER_IDX]
+                )
+                right_gripper_act = d["control"][13]
+
+                lef_delta_pos = left_act_delta[:3]
+                lef_delta_rot = left_act_delta[3:6]
+                right_delta_pos = right_act_delta[:3]
+                right_delta_rot = right_act_delta[3:6]
+
+                # Convert rotation vector to 6D representation
+                lef_delta_rot_6d = rotation_vector_to_sixd(lef_delta_rot)
+                right_delta_rot_6d = rotation_vector_to_sixd(right_delta_rot)
+
+                act.append(
+                    np.concatenate(
+                        [lef_delta_pos, lef_delta_rot_6d, [left_gripper_act], right_delta_pos, right_delta_rot_6d,
                          [right_gripper_act]],
                         axis=-1,
                     )
@@ -809,12 +841,13 @@ if __name__ == "__main__":
     args.add_argument("--data_prefix", type=str, default=None)
     args.add_argument("--model_save_path", type=str,
                       default="/home/zhuoli/dobot_xtrainer/model"
-                              "/dp_plate_wiping_eef_absolute_6d_normalization_20250619")
+                              "/dp_plate_wiping_eef_6d_delta_normalization_20250619")
 
     args.add_argument("--clip_far", type=boolean_string, default=False)
     args.add_argument("--color_jitter", type=boolean_string, default=False)
     args.add_argument("--predict_eef_delta", type=boolean_string, default=False)
-    args.add_argument("--predict_eef_6d", type=boolean_string, default=False)
+    args.add_argument("--predict_eef_6d", type=boolean_string, default=True)
+    args.add_argument("--predict_eef_6d_delta", type=boolean_string, default=True)
     args.add_argument("--predict_pos_delta", type=boolean_string, default=False)
     args.add_argument("--use_ddim", type=boolean_string, default=True)
 
@@ -909,6 +942,7 @@ if __name__ == "__main__":
         without_sampling=args.without_sampling,
         predict_eef_delta=args.predict_eef_delta,
         predict_eef_6d=args.predict_eef_6d,
+        predict_eef_6d_delta=args.predict_eef_6d_delta,
         predict_pos_delta=args.predict_pos_delta,
         clip_far=args.clip_far,
         color_jitter=args.color_jitter,
@@ -968,6 +1002,8 @@ if __name__ == "__main__":
                 args_str += "-eefdelta"
             if args.predict_eef_6d:
                 args_str += "-eef6d"
+            if args.predict_eef_6d_delta:
+                args_str += "-eef6ddelta"
             model_path_suffix += "-" + args_str
         model_path = os.path.join(model_path, model_path_suffix)
 

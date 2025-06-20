@@ -14,7 +14,7 @@ from ModelTrain.dp.bimanual_motion_prior.replay_buffer import ReplayBuffer
 from ModelTrain.dp.bimanual_motion_prior.sampler import (
     SequenceSampler, get_val_mask, downsample_mask)
 from ModelTrain.dp.bimanual_motion_prior.normalizer import LinearNormalizer, QuatSafeNormalizer
-import data_processing
+
 
 LEFT_ARM_6D_INDICES = slice(0, 10)
 RIGHT_ARM_6D_INDICES = slice(10, 20)
