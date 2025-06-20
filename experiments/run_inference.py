@@ -40,14 +40,15 @@ class Args:
     show_img: bool = True
     agent_name: str = "dp"
     act_ckpt_path: str = "./ckpt/act/tidying_up_bowls_abcefg_mix_0925"
-    dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_absolute_6d_normalization_20250619/last.ckpt"
-    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_absolute_6d_20250618/last.ckpt"
+    dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_6d_delta_normalization_20250619/last.ckpt"
+    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_absolute_6d_normalization_20250619/last.ckpt"
     dp_model = None
     act_model = None
     obj_correction = False
     pred_eef_delta = False
     pred_eef_absolute = False
-    pred_eef_absolute_6d = True
+    pred_eef_absolute_6d = False
+    pred_eef_delta_6d = True
 
 
 
@@ -250,6 +251,26 @@ def main(args):
                     action = np.concatenate((joint_state_l, [eef_action[6]], joint_state_r, [eef_action[13]]))
 
 
+                elif args.pred_eef_delta_6d:
+                    eef_delta_6d = prediction
+
+                    eef_delta_6d_left_pos = eef_delta_6d[:3]
+                    eef_delta_6d_left_rot = eef_delta_6d[3:9]
+                    eef_delta_6d_left_gripper = eef_delta_6d[9]
+                    eef_delta_6d_right_pos = eef_delta_6d[10:13]
+                    eef_delta_6d_right_rot = eef_delta_6d[13:19]
+                    eef_delta_6d_right_gripper = eef_delta_6d[19]
+
+                    left_rotvec = sixd_to_rotation_vector(eef_delta_6d_left_rot)
+                    right_rotvec = sixd_to_rotation_vector(eef_delta_6d_right_rot)
+
+                    eef_delta_action = np.concatenate(
+                        (eef_delta_6d_left_pos, left_rotvec, [eef_delta_6d_left_gripper], eef_delta_6d_right_pos,
+                         right_rotvec, [eef_delta_6d_right_gripper]))
+
+                    action = dobot_robot.get_joint_from_eef_delta(eef_delta_action, obs)
+
+
                 else:
                     action = prediction
 
@@ -348,7 +369,7 @@ def main(args):
             eef_action = dobot_robot.get_eef_action(eef_delta, obs["ee_pos_quat"])
             # obs = env.step_eef(eef_action, np.array([1, 1]))
             obs = env.step(action, np.array([1, 1]))
-        elif args.pred_eef_absolute or args.pred_eef_absolute_6d:
+        elif args.pred_eef_absolute or args.pred_eef_absolute_6d or args.pred_eef_delta_6d:
             # obs = env.step_eef(eef_action, np.array([1, 1]))
             obs = env.step(action, np.array([1, 1]))
         else:
