@@ -133,10 +133,12 @@ def visualize_trajectory(left_ee_positions, right_ee_positions, best_trajectory)
 
     batch_size = left_ee_positions.shape[0]
 
-    best_left_arm = best_trajectory[:, :6]  # (prediction_horizon, 7)
-    best_right_arm = best_trajectory[:, 7:13]  # (prediction_horizon, 7)
-    best_left_ee_positions, _ = fk_solver(best_left_arm)  # (prediction_horizon, 3)
-    best_right_ee_positions, _ = fk_solver(best_right_arm)
+    # best_left_arm = best_trajectory[:, :6]  # (prediction_horizon, 7)
+    # best_right_arm = best_trajectory[:, 7:13]  # (prediction_horizon, 7)
+    # best_left_ee_positions, _ = fk_solver(best_left_arm)  # (prediction_horizon, 3)
+    # best_right_ee_positions, _ = fk_solver(best_right_arm)
+    best_left_ee_positions = best_trajectory[:, :3]  # (prediction_horizon, 3)
+    best_right_ee_positions = best_trajectory[:, 10:13]  # (prediction_horizon, 3)
     best_left_ee_positions = np.array(best_left_ee_positions)
     best_right_ee_positions = np.array(best_right_ee_positions)
 

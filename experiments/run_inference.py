@@ -47,8 +47,8 @@ class Args:
     obj_correction = False
     pred_eef_delta = False
     pred_eef_absolute = False
-    pred_eef_absolute_6d = False
-    pred_eef_delta_6d = True
+    pred_eef_absolute_6d = True
+    pred_eef_delta_6d = False
 
 
 
@@ -99,8 +99,11 @@ def main(args):
     # launch the robot server
     dobot_robot_l, dobot_robot_r, dobot_robot = launch_robot_server(args)
 
+    # global variables
+    global running, eef_delta, eef_action, eef_action_6d
+
    # camera init
-    global image_left, image_right, image_top, thread_run, running, eef_delta, eef_action
+    global image_left, image_right, image_top, thread_run
     thread_run=True
     camera_dict = load_ini_data_camera()
     rs1 = RealSenseCamera(flip=False, device_id=camera_dict["left"])
@@ -180,6 +183,7 @@ def main(args):
     obs["joint_positions"][13] = 1.0
     observation['qpos'] = obs["joint_positions"]  # Initial value of the joint
     last_action = observation['qpos'].copy()
+    last_eef_action = None  # Last eef action, used for DP model modulation
 
     first = True
 
@@ -229,7 +233,6 @@ def main(args):
                     joint_state_r = joint_state[6:12]
                     action=np.concatenate((joint_state_l, [eef_action[6]], joint_state_r, [eef_action[13]]))
                 elif args.pred_eef_absolute_6d:
-
                     # get eef_action_rotvec from eef_action_6d
                     eef_action_6d = prediction
                     eef_action_6d_left_pos = eef_action_6d[:3]
@@ -249,8 +252,6 @@ def main(args):
                     joint_state_l = joint_state[:6]
                     joint_state_r = joint_state[6:12]
                     action = np.concatenate((joint_state_l, [eef_action[6]], joint_state_r, [eef_action[13]]))
-
-
                 elif args.pred_eef_delta_6d:
                     eef_delta_6d = prediction
 
@@ -269,14 +270,32 @@ def main(args):
                          right_rotvec, [eef_delta_6d_right_gripper]))
 
                     action = dobot_robot.get_joint_from_eef_delta(eef_delta_action, obs)
-
-
                 else:
                     action = prediction
 
-
             elif mode == "modulate":
-                action, modulation_finished = dp_model.act(dp_observation, modulation=True,last_action = last_action)  # Use modulated trajectory
+                if args.pred_eef_absolute_6d:
+                    prediction, modulation_finished = dp_model.act(dp_observation, modulation=True, last_action=last_eef_action)  # Use modulated trajectory
+                    eef_action_6d = prediction
+                    eef_action_6d_left_pos = eef_action_6d[:3]
+                    eef_action_6d_left_rot = eef_action_6d[3:9]
+                    eef_action_6d_left_gripper = eef_action_6d[9]
+                    eef_action_6d_right_pos = eef_action_6d[10:13]
+                    eef_action_6d_right_rot = eef_action_6d[13:19]
+                    eef_action_6d_right_gripper = eef_action_6d[19]
+
+                    left_rotvec = sixd_to_rotation_vector(eef_action_6d_left_rot)
+                    right_rotvec = sixd_to_rotation_vector(eef_action_6d_right_rot)
+
+                    eef_action = np.concatenate(
+                        (eef_action_6d_left_pos, left_rotvec, [eef_action_6d_left_gripper], eef_action_6d_right_pos,
+                         right_rotvec, [eef_action_6d_right_gripper]))
+
+                    # compute joint action for safety check
+                    joint_state = dobot_robot.get_ik(eef_action)
+                    joint_state_l = joint_state[:6]
+                    joint_state_r = joint_state[6:12]
+                    action = np.concatenate((joint_state_l, [eef_action[6]], joint_state_r, [eef_action[13]]))
 
         else:
             action = act_model.predict(observation,t)
@@ -362,6 +381,7 @@ def main(args):
             first = False
 
         last_action = action.copy()
+        last_eef_action = eef_action_6d.copy() if 'eef_action_6d' in locals() else None
 
         # Control robot movement
         time3 = time.time()

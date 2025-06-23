@@ -430,9 +430,10 @@ class TrainBimanualMotionPrior(BaseTrainer):
                         batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
                         # obs_dict = {'obs': batch['obs']}
                         gt_action = batch['action']
+                        batch_size = gt_action.shape[0]
                         action_dict = {'action': gt_action}
 
-                        result = policy.predict_action(action_dict)
+                        result = policy.predict_action(batch_size)
                         if cfg.pred_action_steps_only:
                             pred_action = result['action']
                             start = cfg.n_obs_steps - 1

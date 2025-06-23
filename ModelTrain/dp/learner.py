@@ -4,6 +4,9 @@ import os
 import time
 import yaml
 import json
+import dill
+import hydra
+
 
 
 import numpy as np
@@ -14,6 +17,8 @@ from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from diffusers.training_utils import EMAModel
 from einops import rearrange, reduce
+from omegaconf import  open_dict
+from ModelTrain.dp.bimanual_motion_prior.base_workspace import BaseWorkspace
 from jsonschema.exceptions import best_match
 
 from ModelTrain.dp.models import *
@@ -21,7 +26,7 @@ from torch.nn.functional import mse_loss
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 from typing import Dict, Tuple
-from utils import fk_solver, align_trajs_to_origin, bimanual_coordinator,bimanual_frame_transform, get_config
+from utils import fk_solver, align_trajs_to_origin, bimanual_coordinator,bimanual_frame_transform, get_config, get_abs_traj_from_delta
 from vis_utils import visualize_trajectory
 from keypoint_proposer import KeypointProposer
 
@@ -131,6 +136,26 @@ class DiffusionPolicy:
         self.optimizer = torch.optim.AdamW(
             params=self.nets.parameters(), lr=1e-4, weight_decay=weight_decay
         )
+
+        # initialize the bimanual motion prior
+        bmp_checkpoint = "/home/zhuoli/dobot_xtrainer/model/bimanual_motion_prior/2025.06.23/17.09.57_train_bimanual_motion_prior/checkpoints/latest.ckpt"
+        payload = torch.load(open(bmp_checkpoint, 'rb'), pickle_module=dill)
+        cfg = payload['cfg']
+        with open_dict(cfg):
+            cfg._target_ = 'ModelTrain.dp.train_bmp.TrainBimanualMotionPrior'
+        cls = hydra.utils.get_class(cfg._target_)
+        workspace = cls(cfg)
+        workspace: BaseWorkspace
+        workspace.load_payload(payload, exclude_keys=None, include_keys=None)
+
+        # get policy from workspace
+        self.bmp_policy = workspace.model
+        if cfg.training.use_ema:
+            self.bmp_policy = workspace.ema_model
+
+        device = torch.device(self.device)
+        self.bmp_policy.to(device)
+        self.bmp_policy.eval()
 
     def set_lr_scheduler(self, num_training_steps):
         # Cosine LR schedule with linear warmup
@@ -891,6 +916,8 @@ class DiffusionPolicy:
                 initial_rollout=True,
                 deterministic=False,
                 noise_scale=noise_scale,
+                last_action=traj_origin,
+                stats=stats
             )
 
             time1 = time.time()
@@ -928,6 +955,8 @@ class DiffusionPolicy:
                     deterministic=False,
                     n_trunc_steps=n_trunc_steps,
                     noise_scale=noise_scale,
+                    last_action=traj_origin,
+                    stats=stats
                 )
 
         time2 = time.time()
@@ -935,18 +964,24 @@ class DiffusionPolicy:
         print("population_scores", population_scores)
         print("best score", population_scores.min())
         print("traj_origin shape", traj_origin.shape)
-        # unnormalize action
-        population_trajectories = population_trajectories.detach().to("cpu").numpy()
-        population_trajectories = unnormalize_data(population_trajectories, stats["action"])
 
-        # align the trajectory
-        population_trajectories, left_ee_positions, right_ee_positions = align_trajs_to_origin(population_trajectories, traj_origin)
+
+        # unnormalize action
+        population_trajectories = unnormalize_6d_pose(population_trajectories, stats=stats["action"])
+        population_trajectories = get_abs_traj_from_delta(population_trajectories, traj_origin)
+        population_trajectories = population_trajectories.detach().to("cpu").numpy()
+        # population_trajectories = unnormalize_data(population_trajectories, stats["action"])
+
+        # # align the trajectory
+        # population_trajectories, left_ee_positions, right_ee_positions = align_trajs_to_origin(population_trajectories, traj_origin)
 
         # select the best trajectory
         best_trajectory = population_trajectories[population_scores.argmin()]
 
         # visualize the trajectory
         if visualize:
+            left_ee_positions = population_trajectories[:, :, :3]
+            right_ee_positions = population_trajectories[:, :, 10:13]
             visualize_trajectory(left_ee_positions, right_ee_positions, best_trajectory)
 
         # schedule the executed trajectory
@@ -979,6 +1014,10 @@ class DiffusionPolicy:
             n_trunc_steps=5,
             noise_scale=1.0,
             ablate_diffusion=False,
+            use_dp_noise=False,
+            use_guidance=False,
+            last_action=None,
+            stats=None,
             gamma = 0.5
     ):
         if initial_rollout:
@@ -991,15 +1030,27 @@ class DiffusionPolicy:
 
         for k in timesteps:
 
-            # predict noise with classifier-free guidance
-            noise_pred = self.ema_nets["noise_pred_net"](
-                sample=naction, timestep=k, global_cond=obs_cond
-            )
-            uncond_noise_pred = self.ema_nets["noise_pred_net"](
-                sample=naction, timestep=k, global_cond=torch.zeros_like(obs_cond)
-            )
-            # noise_pred = (1 + gamma) * noise_pred - gamma * uncond_noise_pred
-            noise_pred = uncond_noise_pred
+            # predict noise with bimanual motion priot
+            bmp_noise_pred = self.bmp_policy.model(naction, k)
+
+            if use_dp_noise or use_guidance:
+                # predict noise with DP policy
+                dp_noise_pred = self.ema_nets["noise_pred_net"](
+                    sample=naction, timestep=k, global_cond=obs_cond
+                )
+                modulated_noise_pred = bmp_noise_pred + dp_noise_pred
+            else:
+                modulated_noise_pred = bmp_noise_pred
+
+            # # predict noise with classifier-free guidance
+            # noise_pred = self.ema_nets["noise_pred_net"](
+            #     sample=naction, timestep=k, global_cond=obs_cond
+            # )
+            # uncond_noise_pred = self.ema_nets["noise_pred_net"](
+            #     sample=naction, timestep=k, global_cond=torch.zeros_like(obs_cond)
+            # )
+            # # noise_pred = (1 + gamma) * noise_pred - gamma * uncond_noise_pred
+            # noise_pred = uncond_noise_pred
 
             if deterministic:
                 eta = 0.0
@@ -1011,11 +1062,14 @@ class DiffusionPolicy:
 
             # inverse diffusion step (remove noise)
             naction = self.noise_scheduler.step(
-                model_output=noise_pred, timestep=k, sample=naction, eta=eta
+                model_output=modulated_noise_pred, timestep=k, sample=naction, eta=eta
             ).prev_sample
 
+            # compute scores
+            naction_delta = unnormalize_6d_pose(naction, stats=stats["action"])
+            naction_abs = get_abs_traj_from_delta(naction_delta, last_action)
+            scores, info = constraints(naction_abs)
             # scores, info = compute_constraint_scores(constraints, naction)
-            scores, info = constraints(naction)
 
         return naction, scores, info
 
@@ -1398,7 +1452,40 @@ class DiffusionPolicy:
 
         # </editor-fold>
 
-        return avoid_left_collision
+        # <editor-fold desc="bimanual motion priot NBCFs with 6d delta prediction">
+        def left_arm_height_upward_delta(trajectory):
+            """
+            Compute the reward for "raising the left arm slightly" based on joint angles.
+
+            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
+                               Each trajectory consists of 16 timesteps, and each timestep has 14 joint angles
+                               (7 for the left arm, 7 for the right arm).
+            :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
+            """
+            # Convert trajectory to numpy and unnormalize
+            device = trajectory.device
+            trajectory = trajectory.detach().cpu().numpy()
+            trajectory = trajectory.reshape(-1, 16, 16)
+            left_trajectory = trajectory[:, :, :8]
+
+            # Extract predicted left arm ee positions
+            left_ee_position = left_trajectory[:, :, :3]
+            scores = np.zeros(self.sampling_batch_size)
+
+            # Iterate scoring each trajectory in the batch
+            for i in range(self.sampling_batch_size):
+                initial_height = left_ee_position[i, 0, 2]  # First timestep
+                final_height = left_ee_position[i, -1, 2]  # Last timestep
+
+                # Compute reward as the height increase from the first to the last timestep
+                scores[i] = final_height - initial_height
+                # scores[i] = initial_height - final_height
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+        # </editor-fold>
+
+
+        return left_arm_height_upward_delta
 
 # def compute_constraint_scores(constraints, trajectory):
 #     all_info = {}

@@ -428,6 +428,13 @@ class Agent:
         )
         return pred
 
+
+    def modulate(self, obs_deque: collections.deque, base_img=None, num_diffusion_iters=15, traj_origin=None):
+        pred = self.policy.run_diffusion_es(self.stats, obs_deque, obj_img=base_img,
+                                            num_diffusion_iters=num_diffusion_iters, traj_origin=traj_origin)
+
+        return pred
+
     def _get_init_train_data(self, total_data_points, memmap_loader_path=""):
         init_data = {}
         for rt in self.representation_type + ["action"]:

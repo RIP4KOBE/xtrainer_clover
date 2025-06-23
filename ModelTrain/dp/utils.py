@@ -5,8 +5,11 @@ import random
 import string
 import tempfile
 import time
+
+import torch
 import yaml
 from copy import copy
+from typing import Union
 from datetime import datetime
 import matplotlib.pyplot as plt
 import roboticstoolbox as rtb
@@ -23,10 +26,12 @@ from ml_collections.config_dict import config_dict
 from ml_collections.config_flags import config_flags
 from spatialmath.base import q2r
 from scipy.spatial.transform import Rotation as R
-
-
-
-
+from pytorch3d.transforms import (
+    quaternion_to_matrix,
+    matrix_to_quaternion,
+    matrix_to_rotation_6d,
+    rotation_6d_to_matrix,
+)
 
 
 def save_args(args, output_dir):
@@ -441,8 +446,8 @@ def bimanual_coordinator(mode: str,
 
     Args:
         mode (str): one of ['left', 'right', 'bimanual']
-        traj_origin (np.ndarray): shape (1, T, 14), original trajectory to update
-        best_trajectory (np.ndarray): shape (1, T, 14), new best trajectory (usually B=1)
+        traj_origin (np.ndarray): shape (1, T, 20), original trajectory to update
+        best_trajectory (np.ndarray): shape (1, T, 20), new best trajectory (usually B=1)
 
     Returns:
         np.ndarray: updated traj_origin with selected parts from best_trajectory
@@ -454,17 +459,17 @@ def bimanual_coordinator(mode: str,
     print("coordinate_traj", coordinate_traj.shape, "best_trajectory", best_trajectory.shape)
 
     if mode == "left":
-        # Only update left arm joints (0:6)
-        coordinate_traj[:, :6] = best_trajectory[:, :6]
+        # Only update left arm eef pose
+        coordinate_traj[:, :9] = best_trajectory[:, :9]
 
     elif mode == "right":
-        # Only update right arm joints (7:13)
-        coordinate_traj[:, 7:13] = best_trajectory[:, 7:13]
+        # Only update right arm jeef pose
+        coordinate_traj[:, 10:19] = best_trajectory[:, 10:19]
 
     elif mode == "bimanual":
         # Update both arms
-        coordinate_traj[:, :6] = best_trajectory[:, :6]
-        coordinate_traj[:, 7:13] = best_trajectory[:, 7:13]
+        coordinate_traj[:, :9] = best_trajectory[:, :9]
+        coordinate_traj[:, 10:19] = best_trajectory[:, 10:19]
 
     return coordinate_traj
 
@@ -502,6 +507,99 @@ def bimanual_frame_transform(left_positions, right_positions):
     right_transformed = np.einsum('ij,btj->bti', R, right_positions) + t
 
     return left_positions, right_transformed
+
+
+def quaternion_multiply(q1: Union[torch.Tensor, np.ndarray], q2: Union[torch.Tensor, np.ndarray]) -> torch.Tensor:
+    """
+    Batch quaternion multiplication q1 * q2
+    """
+    if isinstance(q1, np.ndarray):
+        q1 = torch.from_numpy(q1).float()
+    if isinstance(q2, np.ndarray):
+        q2 = torch.from_numpy(q2).float()
+
+    # q1, q2: [..., 4] where last dim is [x, y, z, w]
+    x1, y1, z1, w1 = q1[..., 0], q1[..., 1], q1[..., 2], q1[..., 3]
+    x2, y2, z2, w2 = q2[..., 0], q2[..., 1], q2[..., 2], q2[..., 3]
+
+    x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+    y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
+    z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+    w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+
+    return torch.stack([x, y, z, w], dim=-1)
+
+
+def quaternion_to_6d_rotation(q: torch.Tensor) -> torch.Tensor:
+    """
+    用 PyTorch3D 快速把四元数转成 6D 表示。
+    Args:
+        q: (..., 4) 四元数张量，格式 [x, y, z, w]
+    Returns:
+        rot6d: (..., 6) 6D 旋转表示
+    """
+    # 1) 四元数 -> 3x3 旋转矩阵
+    R = quaternion_to_matrix(q)              # (..., 3, 3)
+    # 2) 矩阵 -> 6D 表示 (取前两列)
+    rot6d = matrix_to_rotation_6d(R)         # (..., 6)
+    return rot6d
+
+def quaternion_from_6d_rotation(rot6d: torch.Tensor) -> torch.Tensor:
+    """
+    用 PyTorch3D 快速把 6D 旋转表示转回四元数。
+    Args:
+        rot6d: (..., 6) 6D 旋转表示
+    Returns:
+        q: (..., 4) 四元数，格式 [x, y, z, w]
+    """
+    # 1) 6D -> 3x3 旋转矩阵 (内部已做 Gram-Schmidt 正交化)
+    R = rotation_6d_to_matrix(rot6d)         # (..., 3, 3)
+    # 2) 旋转矩阵 -> 四元数
+    q = matrix_to_quaternion(R)              # (..., 4)
+    return q
+
+
+
+def get_abs_traj_from_delta(traj_delta: torch.Tensor, initial_traj: torch.Tensor) -> torch.Tensor:
+    """
+    Compute absolute trajectory from delta and initial pose.
+    Args:
+        traj_delta: (B, T, 20), delta pose
+        initial_traj: (20,), initial pose
+    Returns:
+        torch.Tensor: (B, T, 20), absolute trajectory with 6d rotation representation
+    """
+    B, T, _ = traj_delta.shape
+    init = initial_traj.unsqueeze(0).unsqueeze(0)  # (1, 1, 20)
+
+    # Positions
+    left_pos_abs = traj_delta[:, :, :3] + init[:, :, :3]              # (B, T, 3)
+    right_pos_abs = traj_delta[:, :, 10:13] + init[:, :, 10:13]      # (B, T, 3)
+
+    # Gripper
+    left_gripper = traj_delta[:, :, 9:10]                            # (B, T, 1)
+    right_gripper = traj_delta[:, :, 19:20]                          # (B, T, 1)
+
+    # Rotations
+    left_rot_delta = quaternion_from_6d_rotation(traj_delta[:, :, 3:9])           # (B, T, 4)
+    right_rot_delta = quaternion_from_6d_rotation(traj_delta[:, :, 13:19])        # (B, T, 4)
+    left_rot_init = quaternion_from_6d_rotation(init[:, :, 3:9].expand(B, T, -1)) # (B, T, 4)
+    right_rot_init = quaternion_from_6d_rotation(init[:, :, 13:19].expand(B, T, -1)) # (B, T, 4)
+
+    # Quaternion multiplication for absolute rotation
+    left_quat_abs = quaternion_multiply(left_rot_init, left_rot_delta)      # (B, T, 4)
+    right_quat_abs = quaternion_multiply(right_rot_init, right_rot_delta)   # (B, T, 4)
+
+    left_rot_abs = quaternion_to_6d_rotation(left_quat_abs)  # (B, T, 6)
+    right_rot_abs = quaternion_to_6d_rotation(right_quat_abs)  # (B, T, 6)
+    # Concatenate to final trajectory
+    abs_traj = torch.cat([
+        left_pos_abs, left_rot_abs, left_gripper,
+        right_pos_abs, right_rot_abs, right_gripper
+    ], dim=-1)  # (B, T, 20)
+
+    return abs_traj
+
 
 def kinematic_func_test():
     """
