@@ -530,7 +530,7 @@ def quaternion_multiply(q1: Union[torch.Tensor, np.ndarray], q2: Union[torch.Ten
     return torch.stack([x, y, z, w], dim=-1)
 
 
-def quaternion_to_6d_rotation(q: torch.Tensor) -> torch.Tensor:
+def quaternion_to_6d_rotation(q: Union[torch.tensor, np.ndarray]) -> torch.Tensor:
     """
     用 PyTorch3D 快速把四元数转成 6D 表示。
     Args:
@@ -538,13 +538,18 @@ def quaternion_to_6d_rotation(q: torch.Tensor) -> torch.Tensor:
     Returns:
         rot6d: (..., 6) 6D 旋转表示
     """
+
+
+    if isinstance(q, np.ndarray):
+        q = torch.from_numpy(q).float()
+
     # 1) 四元数 -> 3x3 旋转矩阵
     R = quaternion_to_matrix(q)              # (..., 3, 3)
     # 2) 矩阵 -> 6D 表示 (取前两列)
     rot6d = matrix_to_rotation_6d(R)         # (..., 6)
     return rot6d
 
-def quaternion_from_6d_rotation(rot6d: torch.Tensor) -> torch.Tensor:
+def quaternion_from_6d_rotation(rot6d: Union[torch.tensor, np.ndarray]) -> torch.Tensor:
     """
     用 PyTorch3D 快速把 6D 旋转表示转回四元数。
     Args:
@@ -552,6 +557,10 @@ def quaternion_from_6d_rotation(rot6d: torch.Tensor) -> torch.Tensor:
     Returns:
         q: (..., 4) 四元数，格式 [x, y, z, w]
     """
+
+    if isinstance(rot6d, np.ndarray):
+        rot6d = torch.from_numpy(rot6d).float()
+
     # 1) 6D -> 3x3 旋转矩阵 (内部已做 Gram-Schmidt 正交化)
     R = rotation_6d_to_matrix(rot6d)         # (..., 3, 3)
     # 2) 旋转矩阵 -> 四元数
@@ -562,7 +571,7 @@ def quaternion_from_6d_rotation(rot6d: torch.Tensor) -> torch.Tensor:
 
 def get_abs_traj_from_delta(traj_delta: torch.Tensor, initial_traj: torch.Tensor) -> torch.Tensor:
     """
-    Compute absolute trajectory from delta and initial pose.
+    Compute absolute trajectory eef action with 6d representation from delta and initial pose.
     Args:
         traj_delta: (B, T, 20), delta pose
         initial_traj: (20,), initial pose
@@ -592,6 +601,7 @@ def get_abs_traj_from_delta(traj_delta: torch.Tensor, initial_traj: torch.Tensor
 
     left_rot_abs = quaternion_to_6d_rotation(left_quat_abs)  # (B, T, 6)
     right_rot_abs = quaternion_to_6d_rotation(right_quat_abs)  # (B, T, 6)
+
     # Concatenate to final trajectory
     abs_traj = torch.cat([
         left_pos_abs, left_rot_abs, left_gripper,

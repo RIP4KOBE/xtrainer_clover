@@ -95,7 +95,7 @@ training:
   seed: 42
   debug: False
   resume: True
-  # optimization
+  resume_path: "/home/zhuoli/dobot_xtrainer/model/bimanual_motion_prior/2025.06.23/17.09.57_train_bimanual_motion_prior/checkpoints/latest.ckpt"  # optimization
   lr_scheduler: cosine
   # Transformer needs LR warmup
   lr_warmup_steps: 1000
@@ -116,7 +116,7 @@ training:
 
 logging:
   project: bimanual_motion_prior_debug
-  resume: False
+  resume: True
   mode: online
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}
   tags: ["${name}", "${exp_name}"]

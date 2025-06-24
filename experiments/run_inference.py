@@ -40,8 +40,8 @@ class Args:
     show_img: bool = True
     agent_name: str = "dp"
     act_ckpt_path: str = "./ckpt/act/tidying_up_bowls_abcefg_mix_0925"
-    dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_6d_delta_normalization_20250619/last.ckpt"
-    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_absolute_6d_normalization_20250619/last.ckpt"
+    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_6d_delta_normalization_20250619/last.ckpt"
+    dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_absolute_6d_normalization_20250619/last.ckpt"
     dp_model = None
     act_model = None
     obj_correction = False
@@ -49,6 +49,8 @@ class Args:
     pred_eef_absolute = False
     pred_eef_absolute_6d = True
     pred_eef_delta_6d = False
+    bmp_ckpt_pth: str = ("/media/zhuoli/8ECE-77DB/xtrainer/model/BMP/2025.06.24/00.33.33_train_bimanual_motion_prior"
+                         "/checkpoints/latest.ckpt")
 
 
 

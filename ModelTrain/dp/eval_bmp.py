@@ -27,6 +27,7 @@ from ModelTrain.dp.transform_utils import quat_multiply
 from ModelTrain.dp.bimanual_motion_prior.base_workspace import BaseWorkspace
 from ModelTrain.dp.learner import BaseLowdimPolicy
 from ModelTrain.dp.bimanual_motion_prior.pytorch_util import dict_apply
+from ModelTrain.dp.utils import quaternion_from_6d_rotation
 from scipy.spatial.transform import Rotation as R
 
 def quaternion_multiply(q1: Union[torch.Tensor, np.ndarray], q2: Union[torch.Tensor, np.ndarray]) -> torch.Tensor:
@@ -133,11 +134,13 @@ def vis_action(sample, l_visualize_strat=None, r_visualize_strat=None):
         action = sample[i]  # Get the i-th action sequence
         # extract left and right arm actions
         l_traj_pos = l_visualize_strat[0:3] + action[:, 0:3]
-        r_traj_pos = r_visualize_strat[0:3] + action[:, 8:11]
+        r_traj_pos = r_visualize_strat[0:3] + action[:, 10:13]
+        l_quat_delta = quaternion_from_6d_rotation(action[:, 3:9])
+        r_quat_delta = quaternion_from_6d_rotation(action[:, 13:19])
         l_traj_quat = quaternion_multiply(np.broadcast_to(l_visualize_strat[3:7], (traj_len, 4)),
-                                          action[:, 3:7]).cpu().numpy()
+                                          l_quat_delta).cpu().numpy()
         r_traj_quat = quaternion_multiply(np.broadcast_to(r_visualize_strat[3:7], (traj_len, 4)),
-                                          action[:, 11:15]).cpu(
+                                          r_quat_delta).cpu(
 
         ).numpy()
 
@@ -202,7 +205,7 @@ def eval_policy(policy: BaseLowdimPolicy, batch_size=128, l_visualize_strat=None
     vis_action(action, l_visualize_strat, r_visualize_strat)
 
 @click.command()
-@click.option('-c', '--checkpoint', default='/home/zhuoli/dobot_xtrainer/data/outputs/2025.06.09/14.41.29_train_bimanual_motion_prior/checkpoints/latest.ckpt', required=True)
+@click.option('-c', '--checkpoint', default='/home/zhuoli/dobot_xtrainer/model/bimanual_motion_prior/2025.06.24/00.33.33_train_bimanual_motion_prior/checkpoints/latest.ckpt', required=True)
 @click.option('-o', '--output_dir', default='eval/bimanual_motion_prior', required=True)
 @click.option('-d', '--device', default='cuda:0')
 def main(checkpoint, output_dir, device):

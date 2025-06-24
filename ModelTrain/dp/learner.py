@@ -138,7 +138,7 @@ class DiffusionPolicy:
         )
 
         # initialize the bimanual motion prior
-        bmp_checkpoint = "/home/zhuoli/dobot_xtrainer/model/bimanual_motion_prior/2025.06.23/17.09.57_train_bimanual_motion_prior/checkpoints/latest.ckpt"
+        bmp_checkpoint = "/media/zhuoli/8ECE-77DB/xtrainer/model/BMP/2025.06.24/00.33.33_train_bimanual_motion_prior/checkpoints/latest.ckpt"
         payload = torch.load(open(bmp_checkpoint, 'rb'), pickle_module=dill)
         cfg = payload['cfg']
         with open_dict(cfg):
@@ -1465,8 +1465,8 @@ class DiffusionPolicy:
             # Convert trajectory to numpy and unnormalize
             device = trajectory.device
             trajectory = trajectory.detach().cpu().numpy()
-            trajectory = trajectory.reshape(-1, 16, 16)
-            left_trajectory = trajectory[:, :, :8]
+            trajectory = trajectory.reshape(-1, 16, 20)
+            left_trajectory = trajectory[:, :, :9]
 
             # Extract predicted left arm ee positions
             left_ee_position = left_trajectory[:, :, :3]
@@ -1863,7 +1863,7 @@ class UnConditionalBimanualMotionPrior(BaseLowdimPolicy):
 
         if num_inference_steps is None:
             num_inference_steps = noise_scheduler.config.num_train_timesteps
-        self.num_inference_steps = 10
+        self.num_inference_steps = 100
 
     # ========= inference  ============
     def unconditional_sample(self,
