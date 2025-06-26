@@ -30,7 +30,7 @@ from utils import fk_solver, align_trajs_to_origin, bimanual_coordinator,bimanua
 from vis_utils import visualize_trajectory
 from keypoint_proposer import KeypointProposer
 
-from ModelTrain.dp.bimanual_motion_prior.normalizer import LinearNormalizer, QuatSafeNormalizer
+from ModelTrain.dp.bimanual_motion_prior.normalizer import LinearNormalizer, RotSafeNormalizer
 from ModelTrain.dp.bimanual_motion_prior.mask_generator import LowdimMaskGenerator
 from ModelTrain.dp.dataset import normalize_6d_pose, unnormalize_6d_pose, normalize_data, unnormalize_data
 
@@ -1847,8 +1847,8 @@ class UnConditionalBimanualMotionPrior(BaseLowdimPolicy):
             fix_obs_steps=True,
             action_visible=False
         )
-        self.quat_dims = list(range(3, 7)) + list(range(11, 15))
-        self.normalizer = QuatSafeNormalizer(self.quat_dims)
+        self.rot_dims = list(range(3, 9)) + list(range(13, 19))
+        self.normalizer = RotSafeNormalizer(self.rot_dims)
         # self.normalizer = LinearNormalizer()
         self.horizon = horizon
         self.obs_dim = obs_dim
@@ -1996,7 +1996,7 @@ class UnConditionalBimanualMotionPrior(BaseLowdimPolicy):
         return result
 
     # ========= training  ============
-    def set_normalizer(self, normalizer: LinearNormalizer):
+    def set_normalizer(self, normalizer: RotSafeNormalizer):
         self.normalizer.load_state_dict(normalizer.state_dict())
 
     def get_optimizer(

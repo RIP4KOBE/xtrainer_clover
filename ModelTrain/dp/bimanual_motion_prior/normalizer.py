@@ -8,143 +8,17 @@ import torch.nn as nn
 from ModelTrain.dp.bimanual_motion_prior.pytorch_util import dict_apply
 from ModelTrain.dp.bimanual_motion_prior.dict_of_tensor_mixin import DictOfTensorMixin
 
-
-
-# class QuatSafeNormalizer:
-#     def __init__(self, quaternion_dims: List[int]):
-#         self.quaternion_dims = quaternion_dims
-#         self.normalizer = LinearNormalizer()
-#         self._original_quat_values = None
-#
-#     def fit(self,
-#             data: Union[Dict, torch.Tensor],
-#             **kwargs):
-#         """
-#         Fit LinearNormalizer while excluding quaternion dims
-#         """
-#         data = torch.as_tensor(data).clone()  # clone to avoid modifying original
-#         self._original_quat_values = data[:, self.quaternion_dims].clone()
-#
-#         # Replace quaternion dims with constant (e.g., 0)
-#         data[:, self.quaternion_dims] = 0.0
-#
-#         # Fit using internal LinearNormalizer
-#         self.normalizer.fit(data, **kwargs)
-#
-#     def normalize(self, x: torch.Tensor) -> torch.Tensor:
-#         x = torch.as_tensor(x).clone()
-#         quat = x[:, self.quaternion_dims].clone()
-#         x_norm = self.normalizer.normalize(x)
-#         x_norm[:, self.quaternion_dims] = quat  # restore original quaternion
-#         return x_norm
-#
-#     def unnormalize(self, x: torch.Tensor) -> torch.Tensor:
-#         x = torch.as_tensor(x).clone()
-#         quat = x[:, self.quaternion_dims].clone()
-#         x_raw = self.normalizer.unnormalize(x)
-#         x_raw[:, self.quaternion_dims] = quat  # restore quaternion as-is
-#         return x_raw
-#
-#     def get_input_stats(self):
-#         return self.normalizer.get_input_stats()
-#
-#     def get_output_stats(self):
-#         return self.normalizer.get_output_stats()
-#
-#     def __call__(self, x):
-#         return self.normalize(x)
-
-# class QuatSafeNormalizer:
-#     def __init__(self, quaternion_dims: Union[List[int], Dict[str, List[int]]]):
-#         """
-#         Args:
-#             quaternion_dims:
-#                 - List[int] for flat tensor input
-#                 - Dict[str, List[int]] for dict input
-#         """
-#         self.quaternion_dims = quaternion_dims
-#         self.normalizer = LinearNormalizer()
-#         self._original_quat_values = None  # store raw quaternion values if needed
-#
-#     def fit(self, data: Union[Dict[str, torch.Tensor], torch.Tensor], **kwargs):
-#         """
-#         Fit inner normalizer while skipping quaternion dims
-#         """
-#         if isinstance(data, dict):
-#             data = {k: torch.as_tensor(v).clone() for k, v in data.items()}
-#
-#             replaced_data = {}
-#             for k, v in data.items():
-#                 v = v.clone()
-#                 for dim in self.quaternion_dims:
-#                     if dim < v.shape[1]:  # 安全检查：防止维度越界
-#                         v[:, dim] = 0.0
-#                 replaced_data[k] = v
-#
-#             self.normalizer.fit(replaced_data, **kwargs)
-#
-#         else:
-#             data = torch.as_tensor(data).clone()
-#             if isinstance(self.quaternion_dims, dict):
-#                 raise ValueError("For tensor input, quaternion_dims should be a List[int]")
-#             data[:, self.quaternion_dims] = 0.0
-#             self.normalizer.fit(data, **kwargs)
-#
-#     def normalize(self, x: Union[Dict[str, torch.Tensor], torch.Tensor]) -> Union[Dict[str, torch.Tensor], torch.Tensor]:
-#         if isinstance(x, dict):
-#             x = {k: torch.as_tensor(v).clone() for k, v in x.items()}
-#             x_norm = self.normalizer.normalize(x)
-#
-#             # Replace quaternion dims with original values
-#             for k, v in x.items():
-#                 quat_dims = self.quaternion_dims.get(k, [])
-#                 if quat_dims:
-#                     x_norm[k][:, quat_dims] = v[:, quat_dims]
-#             return x_norm
-#
-#         else:
-#             x = torch.as_tensor(x).clone()
-#             x_norm = self.normalizer.normalize(x)
-#             x_norm[:, self.quaternion_dims] = x[:, self.quaternion_dims]
-#             return x_norm
-#
-#     def unnormalize(self, x: Union[Dict[str, torch.Tensor], torch.Tensor]) -> Union[Dict[str, torch.Tensor], torch.Tensor]:
-#         if isinstance(x, dict):
-#             x = {k: torch.as_tensor(v).clone() for k, v in x.items()}
-#             x_raw = self.normalizer.unnormalize(x)
-#
-#             for k, v in x.items():
-#                 quat_dims = self.quaternion_dims.get(k, [])
-#                 if quat_dims:
-#                     x_raw[k][:, quat_dims] = v[:, quat_dims]
-#             return x_raw
-#
-#         else:
-#             x = torch.as_tensor(x).clone()
-#             x_raw = self.normalizer.unnormalize(x)
-#             x_raw[:, self.quaternion_dims] = x[:, self.quaternion_dims]
-#             return x_raw
-#
-#     def get_input_stats(self):
-#         return self.normalizer.get_input_stats()
-#
-#     def get_output_stats(self):
-#         return self.normalizer.get_output_stats()
-#
-#     def __call__(self, x):
-#         return self.normalize(x)
-
-class QuatSafeNormalizer(DictOfTensorMixin):
-    def __init__(self, quaternion_dims: Union[List[int], Dict[str, List[int]]]):
-        """支持跳过 quaternion 维度归一化的 Normalizer
+class RotSafeNormalizer(DictOfTensorMixin):
+    def __init__(self, rot_dims: Union[List[int], Dict[str, List[int]]]):
+        """支持跳过 rotation 维度归一化的 Normalizer
 
         Args:
-            quaternion_dims:
+            rot_dims:
                 - List[int]: 对于 flat tensor 输入（如 [N, D]）
                 - Dict[str, List[int]]: 对于 dict 输入（如 {'obs': tensor, ...}）
         """
         super().__init__()
-        self.quaternion_dims = quaternion_dims
+        self.rot_dims = rot_dims
         self.normalizer = LinearNormalizer()
 
     @torch.no_grad()
@@ -154,30 +28,30 @@ class QuatSafeNormalizer(DictOfTensorMixin):
             for k, v in data.items():
                 v = torch.as_tensor(v).clone()
                 v = v.clone()
-                for dim in self.quaternion_dims:
+                for dim in self.rot_dims:
                     if dim < v.shape[1]:
                         v[:, dim] = 0.0
                 replaced_data[k] = v
             self.normalizer.fit(replaced_data, **kwargs)
         else:
             data = torch.as_tensor(data).clone()
-            if isinstance(self.quaternion_dims, dict):
-                raise ValueError("For flat tensor input, quaternion_dims should be List[int]")
-            data[:, self.quaternion_dims] = 0.0
+            if isinstance(self.rot_dims, dict):
+                raise ValueError("For flat tensor input, rot_dims should be List[int]")
+            data[:, self.rot_dims] = 0.0
             self.normalizer.fit(data, **kwargs)
 
-    def _restore_quaternion(self, orig, normalized):
+    def _restore_rotation(self, orig, normalized):
         if isinstance(orig, dict):
             restored = {}
             for k, v in orig.items():
                 v_norm = normalized[k].clone()
-                for dim in self.quaternion_dims:
+                for dim in self.rot_dims:
                     if dim < v.shape[1]:
                         v_norm[:, dim] = v[:, dim]
                 restored[k] = v_norm
         else:
             restored = normalized.clone()
-            for dim in self.quaternion_dims:
+            for dim in self.rot_dims:
                 if dim < orig.shape[1]:
                     restored[:, dim] = orig[:, dim]
             return restored

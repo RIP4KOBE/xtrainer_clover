@@ -13,7 +13,7 @@ from ModelTrain.dp.bimanual_motion_prior.pytorch_util import dict_apply
 from ModelTrain.dp.bimanual_motion_prior.replay_buffer import ReplayBuffer
 from ModelTrain.dp.bimanual_motion_prior.sampler import (
     SequenceSampler, get_val_mask, downsample_mask)
-from ModelTrain.dp.bimanual_motion_prior.normalizer import LinearNormalizer, QuatSafeNormalizer
+from ModelTrain.dp.bimanual_motion_prior.normalizer import LinearNormalizer, RotSafeNormalizer
 
 
 LEFT_ARM_6D_INDICES = slice(0, 10)
@@ -570,8 +570,8 @@ class BimanualMotionPriorDataset(BaseLowdimDataset):
 
     def get_normalizer(self, mode='limits', **kwargs):
         data = self._sample_to_data(self.replay_buffer)
-        quaternion_dims = list(range(3, 7)) + list(range(11, 15))
-        normalizer = QuatSafeNormalizer(quaternion_dims)
+        rot_dims = list(range(3, 9)) + list(range(13, 19))
+        normalizer = RotSafeNormalizer(rot_dims)
 
         # normalizer = LinearNormalizer()
         normalizer.fit(data=data, last_n_dims=1, mode=mode, **kwargs)
