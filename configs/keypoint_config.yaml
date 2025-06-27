@@ -11,5 +11,5 @@ keypoint_proposer:
   bounds_min: *bounds_min
   bounds_max: *bounds_max
   seed: *seed
-  handeye_translation: [-0.4615224, -0.4428805, 1.06529779]
-  handeye_quaternion: [0.86386745, -0.0818508, -0.49183171, 0.0716590]  # [x, y, z, w]
+  handeye_translation: [-0.688436053, -0.511152620, 1.247442]
+  handeye_quaternion: [0.84561027, -0.0208527, -0.53332, 0.00861711]  # [x, y, z, w]

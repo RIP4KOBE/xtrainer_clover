@@ -29,7 +29,7 @@ class Args:
     show_img: bool = False
     save_data_path = "/media/zhuoli/8ECE-77DB/xtrainer/Datasets/DP/"
     # project_name = "dp_plate_wiping_eef_delta_20250617"
-    project_name = "dp_eef_action_test"
+    project_name = "multimodal_dp_plate_wiping_eef_absolute_6d_20250626"
     agent_name = "dp"
     dp_save_png = False
     handeye_calibration = False
@@ -301,7 +301,7 @@ def main(args):
     while 1:
         tic = time.time()
 
-        assert thread_cam_top.is_alive(), "Error: please check the top camera!"
+        # assert thread_cam_top.is_alive(), "Error: please check the top camera!"
         assert thread_cam_left.is_alive(), "Error: please check the left camera!"
         assert thread_cam_right.is_alive(), "Error: please check the right camera!"
         assert not is_falling, "sensor   detection!"
@@ -381,9 +381,12 @@ def main(args):
                     mk_dir(dp_save_dir)
 
                     # save img data to obs
-                    obs["base_rgb"] = img_list[0].astype(np.uint8)
-                    obs["left_wrist_rgb"] = img_list[1].astype(np.uint8)
-                    obs["right_wrist_rgb"] = img_list[2].astype(np.uint8)
+                    # obs["base_rgb"] = img_list[0].astype(np.uint8)
+                    # obs["left_wrist_rgb"] = img_list[1].astype(np.uint8)
+                    # obs["right_wrist_rgb"] = img_list[2].astype(np.uint8)
+                    obs["base_rgb"] = cv2.convertScaleAbs(img_list[0])
+                    obs["left_wrist_rgb"] = cv2.convertScaleAbs(img_list[1])
+                    obs["right_wrist_rgb"] = cv2.convertScaleAbs(img_list[2])
 
                     if args.act_eef:
                         save_dp_frame(

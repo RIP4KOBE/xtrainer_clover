@@ -41,7 +41,8 @@ class Args:
     agent_name: str = "dp"
     act_ckpt_path: str = "./ckpt/act/tidying_up_bowls_abcefg_mix_0925"
     # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_6d_delta_normalization_20250619/last.ckpt"
-    dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_absolute_6d_normalization_20250619/last.ckpt"
+    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_absolute_6d_normalization_20250619/last.ckpt"
+    dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/multimodal_dp_plate_wiping_eef_absolute_6d_20250626/last.ckpt"
     dp_model = None
     act_model = None
     obj_correction = False
@@ -59,7 +60,7 @@ lock = threading.Lock()
 
 
 running = True
-mode = "diffusion"
+mode = "diffusion"  # "modulate" or "diffusion"
 
 def on_press(key):
     global running, mode
@@ -102,9 +103,9 @@ def main(args):
     dobot_robot_l, dobot_robot_r, dobot_robot = launch_robot_server(args)
 
     # global variables
-    global running, eef_delta, eef_action, eef_action_6d
+    global running, eef_delta, eef_action, eef_action_6d, modulation_finished
 
-   # camera init
+    # camera init
     global image_left, image_right, image_top, thread_run
     thread_run=True
     camera_dict = load_ini_data_camera()
@@ -223,7 +224,7 @@ def main(args):
             dp_observation['base_rgb'] = image_top
 
             if mode == "diffusion":
-                prediction, _ = dp_model.act(dp_observation)  # Use planned trajectory
+                prediction = dp_model.act(dp_observation)  # Use planned trajectory
 
                 if args.pred_eef_delta:
                     eef_delta = prediction
@@ -277,21 +278,21 @@ def main(args):
 
             elif mode == "modulate":
                 if args.pred_eef_absolute_6d:
-                    prediction, modulation_finished = dp_model.act(dp_observation, modulation=True, last_action=last_eef_action)  # Use modulated trajectory
-                    eef_action_6d = prediction
-                    eef_action_6d_left_pos = eef_action_6d[:3]
-                    eef_action_6d_left_rot = eef_action_6d[3:9]
-                    eef_action_6d_left_gripper = eef_action_6d[9]
-                    eef_action_6d_right_pos = eef_action_6d[10:13]
-                    eef_action_6d_right_rot = eef_action_6d[13:19]
-                    eef_action_6d_right_gripper = eef_action_6d[19]
+                    prediction, modulation_finished = dp_model.modulate(dp_observation,last_action=last_eef_action)  # Use modulated trajectory
+                    eef_modulation_6d = prediction
+                    eef_modulation_6d_left_pos = eef_modulation_6d[:3]
+                    eef_modulation_6d_left_rot = eef_modulation_6d[3:9]
+                    eef_modulation_6d_left_gripper = eef_modulation_6d[9]
+                    eef_modulation_6d_right_pos = eef_modulation_6d[10:13]
+                    eef_modulation_6d_right_rot = eef_modulation_6d[13:19]
+                    eef_modulation_6d_right_gripper = eef_modulation_6d[19]
 
-                    left_rotvec = sixd_to_rotation_vector(eef_action_6d_left_rot)
-                    right_rotvec = sixd_to_rotation_vector(eef_action_6d_right_rot)
+                    left_rotvec = sixd_to_rotation_vector(eef_modulation_6d_left_rot)
+                    right_rotvec = sixd_to_rotation_vector(eef_modulation_6d_right_rot)
 
                     eef_action = np.concatenate(
-                        (eef_action_6d_left_pos, left_rotvec, [eef_action_6d_left_gripper], eef_action_6d_right_pos,
-                         right_rotvec, [eef_action_6d_right_gripper]))
+                        (eef_modulation_6d_left_pos, left_rotvec, [eef_modulation_6d_left_gripper], eef_modulation_6d_right_pos,
+                         right_rotvec, [eef_modulation_6d_right_gripper]))
 
                     # compute joint action for safety check
                     joint_state = dobot_robot.get_ik(eef_action)
@@ -383,7 +384,7 @@ def main(args):
             first = False
 
         last_action = action.copy()
-        last_eef_action = eef_action_6d.copy() if 'eef_action_6d' in locals() else None
+        last_eef_action = eef_action_6d.copy()
 
         # Control robot movement
         time3 = time.time()

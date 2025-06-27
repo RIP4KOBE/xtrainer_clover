@@ -154,6 +154,7 @@ class BimanualDPAgent:
         self.obsque = collections.deque(maxlen=dp_args["obs_horizon"])
         self.dp.load(ckpt_path)
         self.action_queue = collections.deque(maxlen=dp_args["action_horizon"])
+        self.modulation_queue = collections.deque(maxlen=dp_args["pred_horizon"])
         self.max_length = 100
         self.count = 0
         self.except_thumb_hand_indices = np.array([6, 7, 8, 9, 18, 19, 20, 21])
@@ -164,6 +165,8 @@ class BimanualDPAgent:
         self.predict_pos_delta = dp_args["predict_pos_delta"]
         assert not (self.predict_eef_delta and self.predict_pos_delta)
         self.control = get_reset_joints(ur_eef=self.predict_eef_delta)
+        self.last_modulation_result = None
+        self.first_modulation = True
         self.modulated = False
 
         self.num_diffusion_iters = dp_args["num_diffusion_iters"]
@@ -203,8 +206,7 @@ class BimanualDPAgent:
         for i in range(25):  # burn in
             self.act(example_obs)
 
-    def act(self, obs: Dict[str, Any], modulation=False, last_action=None) -> Tuple[np.ndarray, bool]:
-        base_img = obs['base_rgb']
+    def act(self, obs: Dict[str, Any]) -> np.ndarray:
         obs = self.dp.get_observation([obs], load_img=True)
         if "img" in obs:
             obs["img"] = self.dp.eval_transform(obs["img"].squeeze(0))
@@ -215,26 +217,15 @@ class BimanualDPAgent:
         else:
             self.obsque.append(obs)
 
-        modulation_finished = False
-
         # if action queue is not empty, return the first action in the queue
         if len(self.action_queue) > 0:
             act = self.action_queue.popleft()
-            if len(self.action_queue) == 0 and modulation:
-                modulation_finished = True
         # if action queue is empty, predict new actions
         else:
             time1 = time.time()
-
-            if not modulation:
-                pred = self.dp.predict(
-                    self.obsque, num_diffusion_iters=self.num_diffusion_iters
-                )
-            else:
-                pred = self.dp.modulate(
-                    self.obsque, base_img, num_diffusion_iters=self.num_diffusion_iters, traj_origin=last_action,
-                )
-
+            pred = self.dp.predict(
+                self.obsque, num_diffusion_iters=self.num_diffusion_iters
+            )
             time2 = time.time()
             print("DP planning time", time2 - time1)
 
@@ -244,4 +235,57 @@ class BimanualDPAgent:
 
             act = self.action_queue.popleft()
 
-        return act, modulation_finished
+        return act
+
+    def modulate(self, obs: Dict[str, Any], last_action=None) -> Tuple[np.ndarray, bool]:
+        base_img = obs['base_rgb']
+        obs = self.dp.get_observation([obs], load_img=True)
+        self.action_queue.clear()
+        self.obsque.clear()
+
+        if "img" in obs:
+            obs["img"] = self.dp.eval_transform(obs["img"].squeeze(0))
+
+        # Initialize the observation queue
+        if len(self.obsque) == 0:
+            self.obsque.extend([obs] * self.dp_args["obs_horizon"])
+        else:
+            self.obsque.append(obs)
+
+        # Case 1: If modulation_queue is not empty, continue executing the current action sequence
+        if len(self.modulation_queue) > 0:
+            act = self.modulation_queue.popleft()
+
+        # Case 2: modulation_queue is empty and it's the first time generating actions
+        elif self.first_modulation and len(self.modulation_queue) == 0:
+            time1 = time.time()
+            pred = self.dp.modulate(
+                self.obsque,
+                base_img,
+                num_diffusion_iters=self.num_diffusion_iters,
+                traj_origin=last_action,
+            )
+            time2 = time.time()
+            print("DP planning time", time2 - time1)
+
+            # Cache the last action from this prediction in case of fallback
+            self.last_modulation_result = pred[-1]
+
+            # Append all predicted actions to the modulation queue
+            for act_item in pred:
+                self.modulation_queue.append(act_item)
+
+            # Mark that the first modulation is done
+            self.first_modulation = False
+            self.modulated = False
+
+            # Return the first action from the new plan
+            act = self.modulation_queue.popleft()
+
+        # Case 3: modulation_queue is empty and it's not the first time (actions are finished)
+        elif not self.first_modulation and len(self.modulation_queue) == 0:
+            act = self.last_modulation_result  # fallback action, e.g., hold still
+            self.modulated = True
+            self.first_modulation = True
+
+        return act, self.modulated

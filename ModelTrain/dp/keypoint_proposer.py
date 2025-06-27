@@ -291,6 +291,7 @@ class KeypointProposer:
             cv2.imshow('Projected Image', projected_img)
             cv2.waitKey(5000)
             cv2.destroyAllWindows()
+            cv2.imwrite('/home/zhuoli/xtrainer_clover/configs/projected_image.png', projected_img)
 
         # save keypoints as metadata
         candidate_keypoints = candidate_keypoints.tolist()

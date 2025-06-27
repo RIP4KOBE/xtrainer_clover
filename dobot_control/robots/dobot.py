@@ -144,6 +144,7 @@ class DobotRobot(Robot):
             joint_state[0], joint_state[1], joint_state[2],
             joint_state[3], joint_state[4], joint_state[5]
         ,0,1).split("{")[1].split("}")[0].split(","))))
+        # print("fk_sol:", fk_sol)
         pos = fk_sol[:3] / 1000
         rot = R.from_euler('xyz', fk_sol[3:6], degrees=True).as_rotvec() # Convert zyx Euler angles to rotation vector
         fk_sol = np.concatenate((pos, rot))  # [x, y, z, rx, ry, rz]
@@ -278,9 +279,10 @@ class DobotRobot(Robot):
         t_after_conversion = time.time()
         # print("start command_eef_state:", pos_rot)
 
+        # TODO ServoP的输入位姿有可能是TCP位姿，而不是正解得到的EE位姿，谨慎使用
         self.robot.ServoP(pos_rot[0],pos_rot[1], pos_rot[2],
                         pos_rot[3], pos_rot[4], pos_rot[5])
-
+        # print("end command_eef_state:", pos_rot)
         if self._use_gripper:
             gripper_pos = int(eef_state[-1] * 255)
             self.gripper.move(gripper_pos, 100, 1)
@@ -380,17 +382,17 @@ class DobotRobot(Robot):
 
 
 def main():
-    dobot = DobotRobot("192.168.5.2", no_gripper=False)
+    dobot = DobotRobot("192.168.5.1", no_gripper=False)
     dobot.set_do_status([1, 0])
     dobot.set_do_status([2, 0])
     dobot.set_do_status([3, 0])
 
-    eef_pose = dobot.get_eef_pose()
-    print("eef_pose:", eef_pose)
+    # eef_pose = dobot.get_eef_pose()
+    # print("eef_pose:", eef_pose)
 
-    # joint_state = np.array([76, -15, 79, -6, -100, -88, 1.0])
-    # robot_joints_angle = joint_state[:6]  # ��λ������
-    # robot_joints = [np.deg2rad(robot_joint) for robot_joint in robot_joints_angle]
+    joint_state = np.array([-90, 0, -90, 0, 90, 90, 1.0])
+    robot_joints_angle = joint_state[:6]
+    robot_joints = [np.deg2rad(robot_joint) for robot_joint in robot_joints_angle]
     #
     # print("joint_radians:", robot_joints)
 
@@ -404,9 +406,9 @@ def main():
     # eef_state = np.concatenate((pos, rot, [joint_state[-1]]))
 
     # fk via dobot api
-    # eef_state = dobot.get_fk(joint_state)
+    eef_state = dobot.get_fk(robot_joints)
     # eef_state = np.concatenate((eef_state, [joint_state[-1]]))
-    # print("eef_state for testing:", eef_state)
+    print("eef_state for testing:", eef_state)
 
     # dobot.command_joint_state(joint_state)
     # pos_rot = dobot.get_eef_pose()

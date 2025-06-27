@@ -15,10 +15,13 @@ import torch.nn.functional as F
 from diffusers.optimization import get_scheduler
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from diffusers.training_utils import EMAModel
+import diffusers.training_utils as diffuser_utils
 from einops import rearrange, reduce
 from omegaconf import  open_dict
 from ModelTrain.dp.bimanual_motion_prior.base_workspace import BaseWorkspace
+from dataset import LEFT_ARM_6D_INDICES, RIGHT_ARM_6D_INDICES
+from scipy.spatial.transform import Rotation as R
+from vis_utils import vis_action
 from jsonschema.exceptions import best_match
 
 from ModelTrain.dp.models import *
@@ -26,13 +29,15 @@ from torch.nn.functional import mse_loss
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 from typing import Dict, Tuple
-from utils import fk_solver, align_trajs_to_origin, bimanual_coordinator,bimanual_frame_transform, get_config, get_abs_traj_from_delta
+from utils import fk_solver, align_trajs_to_origin, bimanual_coordinator,bimanual_frame_transform, get_config, get_abs_traj_from_delta,sixd_to_rotation_matrix
 from vis_utils import visualize_trajectory
 from keypoint_proposer import KeypointProposer
 
 from ModelTrain.dp.bimanual_motion_prior.normalizer import LinearNormalizer, RotSafeNormalizer
 from ModelTrain.dp.bimanual_motion_prior.mask_generator import LowdimMaskGenerator
 from ModelTrain.dp.dataset import normalize_6d_pose, unnormalize_6d_pose, normalize_data, unnormalize_data
+from pytorch3d.transforms import matrix_to_euler_angles
+
 
 
 
@@ -129,7 +134,7 @@ class DiffusionPolicy:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Exponential Moving Average of the model weights
-        self.ema = EMAModel(parameters=self.nets.parameters(), power=0.75)
+        self.ema = diffuser_utils.EMAModel(parameters=self.nets.parameters(), power=0.75)
         self.ema_nets = copy.deepcopy(self.nets)
 
         # Standard ADAM optimizer
@@ -829,18 +834,30 @@ class DiffusionPolicy:
         mse = self.train(num_epochs=1, dataloader=eval_loader, eval=True)
         return mse
 
+    def process_trajectory(self, traj_delta, last_action=None, device=None):
+        """
+        Process the trajectory by unnormalizing and calculate absolute traj.
+        """
+        # Convert trajectory to numpy and unnormalize
+        traj_delta = self.bmp_policy.normalizer['action'].unnormalize(traj_delta)
+        # last_action = torch.from_numpy(last_action).to(self.device, dtype=torch.float32)
+        traj_abs= get_abs_traj_from_delta(traj_delta, last_action, device=device)
+        # traj_delta = traj_delta.reshape(-1, 16, 20)
+        traj_abs = traj_abs.detach().cpu().numpy()
+
+        return traj_abs
 
     def run_diffusion_es(self, stats, obs_deque, obj_img, num_diffusion_iters=None, constraints=None, traj_origin=None,
                          use_cem=False, cem_iters=20,
                          num_elites=32,
-                         temperature=0.1, visualize=False):
+                         temperature=0.1, visualize=True):
         self.ema_nets.eval()
 
         if not num_diffusion_iters:
             num_diffusion_iters = self.num_diffusion_iters
 
         if constraints is None:
-            constraints = self.generate_constraints(stats)
+            constraints = self.generate_constraints(stats["action"])
 
         with torch.no_grad():
             features = []
@@ -901,11 +918,15 @@ class DiffusionPolicy:
             trunc_step_schedule = np.linspace(5, 1, cem_iters).astype(int)
             noise_scale = 0.1
 
+            bmp_action_dim = 20
+
             noisy_action = torch.randn(
-                (self.sampling_batch_size, self.pred_horizon, self.action_dim), device=self.device
+                (self.sampling_batch_size, self.pred_horizon, bmp_action_dim), device=self.device
             )
 
             naction = noisy_action
+
+            # dp noise scheduler
             self.noise_scheduler.set_timesteps(num_diffusion_iters)
 
             # Initialize elite set
@@ -917,8 +938,21 @@ class DiffusionPolicy:
                 deterministic=False,
                 noise_scale=noise_scale,
                 last_action=traj_origin,
-                stats=stats
+                stats=stats["action"]
             )
+
+            # visualize the initial population for debugging
+            # action_pred = self.bmp_policy.normalizer['action'].unnormalize(population_trajectories)
+            #
+            # # visualize the initial population
+            # l_visualize_strat = np.array([traj_origin[0], traj_origin[1], traj_origin[2],
+            #                               3.89601281525054e-06, -0.707109378514511, -0.707104183808496,
+            #                               -6.49338013368839e-06])
+            # r_visualize_strat = np.array([traj_origin[10], traj_origin[11], traj_origin[12],
+            #                               -1.29865980772817e-06, -0.707106781180585, 0.707106781190125,
+            #                               1.29866934832097e-06])
+            #
+            # vis_action(action_pred, l_visualize_strat, r_visualize_strat)
 
             time1 = time.time()
             for i in range(cem_iters):
@@ -956,7 +990,7 @@ class DiffusionPolicy:
                     n_trunc_steps=n_trunc_steps,
                     noise_scale=noise_scale,
                     last_action=traj_origin,
-                    stats=stats
+                    stats=stats["action"]
                 )
 
         time2 = time.time()
@@ -966,11 +1000,8 @@ class DiffusionPolicy:
         print("traj_origin shape", traj_origin.shape)
 
 
-        # unnormalize action
-        population_trajectories = unnormalize_6d_pose(population_trajectories, stats=stats["action"])
-        population_trajectories = get_abs_traj_from_delta(population_trajectories, traj_origin)
-        population_trajectories = population_trajectories.detach().to("cpu").numpy()
-        # population_trajectories = unnormalize_data(population_trajectories, stats["action"])
+        # unnormalize and get abs action
+        population_trajectories = self.process_trajectory(population_trajectories, last_action=traj_origin, device=self.device)
 
         # # align the trajectory
         # population_trajectories, left_ee_positions, right_ee_positions = align_trajs_to_origin(population_trajectories, traj_origin)
@@ -978,22 +1009,23 @@ class DiffusionPolicy:
         # select the best trajectory
         best_trajectory = population_trajectories[population_scores.argmin()]
 
+        # schedule the executed trajectory
+        best_trajectory = bimanual_coordinator(
+            mode="left_eef_pos",
+            traj_origin=traj_origin,
+            best_trajectory=best_trajectory
+        )
+
         # visualize the trajectory
         if visualize:
             left_ee_positions = population_trajectories[:, :, :3]
             right_ee_positions = population_trajectories[:, :, 10:13]
             visualize_trajectory(left_ee_positions, right_ee_positions, best_trajectory)
 
-        # schedule the executed trajectory
-        best_trajectory = bimanual_coordinator(
-            mode="left",
-            traj_origin=traj_origin,
-            best_trajectory=best_trajectory
-        )
 
         # only take action_horizon number of actions
         start = self.obs_horizon - 1
-        end = start + self.action_horizon
+        end = start + self.pred_horizon
         action = best_trajectory[start:end, :]
 
         out = {
@@ -1032,15 +1064,22 @@ class DiffusionPolicy:
 
             # predict noise with bimanual motion priot
             bmp_noise_pred = self.bmp_policy.model(naction, k)
+            modulated_noise_pred = bmp_noise_pred
 
-            if use_dp_noise or use_guidance:
+            if not initial_rollout and use_dp_noise:
                 # predict noise with DP policy
                 dp_noise_pred = self.ema_nets["noise_pred_net"](
                     sample=naction, timestep=k, global_cond=obs_cond
                 )
-                modulated_noise_pred = bmp_noise_pred + dp_noise_pred
-            else:
-                modulated_noise_pred = bmp_noise_pred
+                # modulated_noise_pred = bmp_noise_pred + dp_noise_pred
+                if isinstance(last_action, np.ndarray):
+                    last_action = torch.from_numpy(last_action).to(self.device)
+                # dp_noise_pred = dp_noise_pred - last_action
+                modulated_noise_pred = (1 + gamma) * bmp_noise_pred - gamma * dp_noise_pred
+            elif use_guidance:
+                # 约束梯度计算应基于增量空间
+                g = constraints.calculate_gradient(naction)
+                modulated_noise_pred = (1 + gamma) * bmp_noise_pred - gamma * dp_noise_pred + g  # 在噪声样本上直接应用梯度
 
             # # predict noise with classifier-free guidance
             # noise_pred = self.ema_nets["noise_pred_net"](
@@ -1066,9 +1105,7 @@ class DiffusionPolicy:
             ).prev_sample
 
             # compute scores
-            naction_delta = unnormalize_6d_pose(naction, stats=stats["action"])
-            naction_abs = get_abs_traj_from_delta(naction_delta, last_action)
-            scores, info = constraints(naction_abs)
+            scores, info = constraints(naction, last_action)
             # scores, info = compute_constraint_scores(constraints, naction)
 
         return naction, scores, info
@@ -1088,6 +1125,22 @@ class DiffusionPolicy:
             data = json.load(f)
         keypoints_list = data['init_keypoint_positions']
         keypoints = np.array(keypoints_list)
+    #     T_left_to_right = np.eye(4)
+    #     T_left_to_right[:3, 3] = np.array([0.0, -1.08, 0.0])
+    #     T_left_to_right[:3, :3] = np.array([
+    #     [-1.0,  0.0,  0.0],
+    #     [ 0.0, -1.0,  0.0],
+    #     [ 0.0,  0.0,  1.0]
+    # ])
+    #     # Transform each keypoint individually
+    #     transformed_keypoints = []
+    #     for kp in keypoints:
+    #         kp_hom = np.append(kp, 1.0)  # Convert to homogeneous coordinate [x, y, z, 1]
+    #         kp_transformed_hom = T_left_to_right @ kp_hom  # Apply transformation
+    #         transformed_keypoints.append(kp_transformed_hom[:3])  # Drop the homogeneous part
+    #
+    #     # Convert to NumPy array
+    #     keypoints = np.array(transformed_keypoints)  # shape: (N, 3)
         # print("keypoints for NBCFs", keypoints)# Shape: (5, 3)
 
         # <editor-fold desc="utils">
@@ -1421,39 +1474,39 @@ class DiffusionPolicy:
         # </editor-fold>
 
         # <editor-fold desc="object-related NBCFs">
-        def avoid_left_collision(trajectory):
+        def avoid_right_collision(trajectory, last_action):
             """
-            Compute the reward for "watching out for the vase on the left hand" by maintaining a safe distance.
+            Compute the reward for "watching out for the bottle on the right hand" by maintaining a safe distance.
 
-            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
-                               Each trajectory consists of 16 timesteps, and each timestep has 14 joint angles
-                               (7 for the left arm, 7 for the right arm).
-            :param vase_position: Numpy array of shape (3,), the fixed world coordinates of the vase.
+            :param trajectory: Tensor of shape (batch, 16, 20), representing bimanual motion trajectories.
+                               Each trajectory consists of 16 timesteps, and each timestep has 20 eef pose with 6d rotation
+                               (10 for the left arm, 10 for the right arm).
+            :param bottle_position: Numpy array of shape (3,), the fixed world coordinates of the vase.
             :param safe_distance: Minimum allowable distance to the vase to avoid collision.
             :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
             """
             device = trajectory.device
-            trajectory = trajectory.detach().cpu().numpy()
-            trajectory = trajectory.reshape(-1, 16, 14)
-            trajectory = unnormalize_data(trajectory, stats["action"])
-            left_trajectory = trajectory[:, :, :6]
+            trajectory = self.process_trajectory(trajectory, last_action, device=device)
+            right_trajectory = trajectory[:, :, RIGHT_ARM_6D_INDICES]
 
-            # Extract predicted left arm end-effector positions
-            ee_positions, _ = fk_solver(left_trajectory)  # Shape: (batch, 16, 3)
-            scores = np.zeros(trajectory.shape[0])
+            # Extract predicted left arm ee positions
+            right_ee_position = right_trajectory[:, :, :3]
+            bottle_position = keypoints[5]
+            safe_distance = 0.15  # Minimum distance to the bottle
+            scores = np.zeros(self.sampling_batch_size)
 
-            for i in range(trajectory.shape[0]):
-                distance = np.linalg.norm(ee_positions[i] - keypoints[5], axis=1)
-                mean_distance = np.mean(distance)
-                scores[i] = mean_distance
+            for i in range(self.sampling_batch_size):
+                distances = np.linalg.norm(right_ee_position[i] - bottle_position, axis=1)  # (16,)
+                # scores[i] = -np.mean((distances - safe_distance) ** 2) + (final_height - initial_height) # average deviation over trajectory
+                scores[i] = -np.mean((distances - safe_distance) ** 2) # average deviation over trajectory
 
             scores = -torch.as_tensor(scores, device=device)
             return scores, {}
 
         # </editor-fold>
 
-        # <editor-fold desc="bimanual motion priot NBCFs with 6d delta prediction">
-        def left_arm_height_upward_delta(trajectory):
+        # <editor-fold desc="bimanual motion priot NBCFs with 6D rotation">
+        def left_arm_height_upward(trajectory, last_action):
             """
             Compute the reward for "raising the left arm slightly" based on joint angles.
 
@@ -1462,11 +1515,9 @@ class DiffusionPolicy:
                                (7 for the left arm, 7 for the right arm).
             :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
             """
-            # Convert trajectory to numpy and unnormalize
             device = trajectory.device
-            trajectory = trajectory.detach().cpu().numpy()
-            trajectory = trajectory.reshape(-1, 16, 20)
-            left_trajectory = trajectory[:, :, :9]
+            trajectory = self.process_trajectory(trajectory,last_action, device=device)
+            left_trajectory = trajectory[:, :, LEFT_ARM_6D_INDICES]
 
             # Extract predicted left arm ee positions
             left_ee_position = left_trajectory[:, :, :3]
@@ -1482,10 +1533,207 @@ class DiffusionPolicy:
                 # scores[i] = initial_height - final_height
             scores = -torch.as_tensor(scores, device=device)
             return scores, {}
+
+        def left_arm_rot_adjustment(trajectory, last_action):
+            """
+            Compute the reward for rotating left wrist strictly around its own z-axis by 30 degrees.
+
+            :param trajectory: Tensor of shape (batch, 16, 20)
+            :return: Reward tensor of shape (batch,)
+            """
+            device = trajectory.device
+            trajectory = self.process_trajectory(trajectory, last_action, device=device)
+            left_trajectory = trajectory[:, :, LEFT_ARM_6D_INDICES]
+
+            # Extract 6D rotation representations (batch, 16, 6)
+            left_ee_rot = left_trajectory[:, :, 3:9]
+            scores = np.zeros(self.sampling_batch_size)
+
+            for i in range(self.sampling_batch_size):
+                rot_mats = np.stack([sixd_to_rotation_matrix(sixd) for sixd in left_ee_rot[i]])
+
+                # Get initial and final orientations
+                initial_rot = rot_mats[0, :, :]  # (pred_horizon, 3, 3)
+                final_rot = rot_mats[-1, :, :]  # (pred_horizon, 3, 3)
+
+                # Relative rotation: R_rel = R_start^T * R_end
+                rot_rel = initial_rot.T @ final_rot
+
+                # Convert to Euler angles (ZYX intrinsic)
+                euler = R.from_matrix(rot_rel).as_euler('ZYX', degrees=False)  # (3,)
+                yaw, pitch, roll = euler[0], euler[1], euler[2]
+
+                # Reward is negative distance to target yaw
+                target_yaw = math.radians(30)
+
+                # Reward: closer to yaw=30°, pitch=0, roll=0 is better
+                scores[i] = -(
+                        (yaw - target_yaw) ** 2 +  # 使用平方误差（区分方向）
+                        (pitch ** 2 + roll ** 2)  # 同样用平方误差
+                )
+
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
+        def left_gripper_adjustment(trajectory, last_action):
+            """
+            Compute the reward for rotating left wrist strictly around its own z-axis by 30 degrees.
+
+            :param trajectory: Tensor of shape (batch, 16, 20)
+            :return: Reward tensor of shape (batch,)
+            """
+            device = trajectory.device
+            trajectory = self.process_trajectory(trajectory, last_action, device=device)
+            left_trajectory = trajectory[:, :, LEFT_ARM_6D_INDICES]
+
+            # Extract 6D rotation representations (batch, 16, 6)
+            left_gripper_state = left_trajectory[:, :, 9]
+            scores = np.zeros(self.sampling_batch_size)
+
+            for i in range(self.sampling_batch_size):
+
+                # Getfinal gripper state
+                final_gripper_state = left_gripper_state[i, -1]  # (pred_horizon,)
+
+                # Reward is negative distance to target yaw
+                target_gripper_state = 0
+
+                # Reward: closer to yaw=30°, pitch=0, roll=0 is better
+                scores[i] = -(final_gripper_state - target_gripper_state)
+
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
+        def right_arm_height_upward(trajectory, last_action):
+            """
+            Compute the reward for "raising the left arm slightly" based on joint angles.
+
+            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
+                               Each trajectory consists of 16 timesteps, and each timestep has 14 joint angles
+                               (7 for the left arm, 7 for the right arm).
+            :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
+            """
+            device = trajectory.device
+            trajectory = self.process_trajectory(trajectory,last_action, device=device)
+            right_trajectory = trajectory[:, :, RIGHT_ARM_6D_INDICES]
+
+            # Extract predicted left arm ee positions
+            right_ee_position = right_trajectory[:, :, :3]
+            scores = np.zeros(self.sampling_batch_size)
+
+            # Iterate scoring each trajectory in the batch
+            for i in range(self.sampling_batch_size):
+                initial_height = right_ee_position[i, 0, 2]  # First timestep
+                final_height = right_ee_position[i, -1, 2]  # Last timestep
+                rel_height = final_height - initial_height
+
+                # Compute reward as the height increase from the first to the last timestep
+                scores[i] = -abs(rel_height-0.05)  # Reward is negative distance to target height increase
+                # scores[i] = initial_height - final_height
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
+        def right_arm_rot_adjustment(trajectory, last_action):
+            """
+            Compute the reward for rotating left wrist strictly around its own z-axis by 30 degrees.
+
+            :param trajectory: Tensor of shape (batch, 16, 20)
+            :return: Reward tensor of shape (batch,)
+            """
+            device = trajectory.device
+            trajectory = self.process_trajectory(trajectory, last_action, device=device)
+            right_trajectory = trajectory[:, :, RIGHT_ARM_6D_INDICES]
+
+            # Extract 6D rotation representations (batch, 16, 6)
+            right_ee_rot = right_trajectory[:, :, 3:9]
+            scores = np.zeros(self.sampling_batch_size)
+
+            for i in range(self.sampling_batch_size):
+                rot_mats = np.stack([sixd_to_rotation_matrix(sixd) for sixd in right_ee_rot[i]])
+
+                # Get initial and final orientations
+                initial_rot = rot_mats[0, :, :]  # (pred_horizon, 3, 3)
+                final_rot = rot_mats[-1, :, :]  # (pred_horizon, 3, 3)
+
+                # Relative rotation: R_rel = R_start^T * R_end
+                rot_rel = initial_rot.T @ final_rot
+
+                # Convert to Euler angles (ZYX intrinsic)
+                euler = R.from_matrix(rot_rel).as_euler('ZYX', degrees=False)  # (3,)
+                yaw, pitch, roll = euler[0], euler[1], euler[2]
+
+                # Reward is negative distance to target yaw
+                target_yaw = math.radians(30)
+
+                # Reward: closer to yaw=30°, pitch=0, roll=0 is better
+                scores[i] = -(
+                        (yaw - target_yaw) ** 2 +  # 使用平方误差（区分方向）
+                        (pitch ** 2 + roll ** 2)  # 同样用平方误差
+                )
+
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
+        def right_gripper_adjustment(trajectory, last_action):
+            """
+            Compute the reward for rotating left wrist strictly around its own z-axis by 30 degrees.
+
+            :param trajectory: Tensor of shape (batch, 16, 20)
+            :return: Reward tensor of shape (batch,)
+            """
+            device = trajectory.device
+            trajectory = self.process_trajectory(trajectory, last_action, device=device)
+            right_trajectory = trajectory[:, :, RIGHT_ARM_6D_INDICES]
+
+            # Extract 6D rotation representations (batch, 16, 6)
+            right_gripper_state = right_trajectory[:, :, 9]
+            scores = np.zeros(self.sampling_batch_size)
+
+            for i in range(self.sampling_batch_size):
+
+                # Getfinal gripper state
+                final_gripper_state = right_gripper_state[i, -1]  # (pred_horizon,)
+
+                # Reward is negative distance to target yaw
+                target_gripper_state = 0
+
+                # Reward: closer to yaw=30°, pitch=0, roll=0 is better
+                scores[i] = -(final_gripper_state - target_gripper_state)
+
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
+        def multimodal_plate_wiping(trajectory, last_action):
+            """
+            Compute the reward for "raising the left arm slightly" based on joint angles.
+
+            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
+                               Each trajectory consists of 16 timesteps, and each timestep has 14 joint angles
+                               (7 for the left arm, 7 for the right arm).
+            :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
+            """
+            device = trajectory.device
+            trajectory = self.process_trajectory(trajectory,last_action, device=device)
+            left_trajectory = trajectory[:, :, LEFT_ARM_6D_INDICES]
+
+            # Extract predicted left arm ee positions
+            left_ee_position = left_trajectory[:, :, :3]
+            plate_position = keypoints[18]
+            safe_distance = 0.05  # Minimum distance to the bottle
+            scores = np.zeros(self.sampling_batch_size)
+
+            # Iterate scoring each trajectory in the batch
+            for i in range(self.sampling_batch_size):
+                final_position = left_ee_position[i, -1, :3]  # Last timestep position
+                distances = np.linalg.norm(final_position - plate_position)  # (16,)
+                scores[i] = -np.mean((distances - safe_distance) ** 2) # average deviation over trajectory
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
         # </editor-fold>
 
 
-        return left_arm_height_upward_delta
+        return multimodal_plate_wiping
 
 # def compute_constraint_scores(constraints, trajectory):
 #     all_info = {}
