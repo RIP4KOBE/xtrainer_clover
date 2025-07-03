@@ -105,6 +105,21 @@ def sixd_to_rotation_matrix(sixd):
     return rot_mat
 
 
+def pose_to_SE3(pose):
+    """
+    Convert 10D pose (3D pos + 6D rot) to SE(3) matrix (4x4).
+    pose: (10,) or (B, 10)
+    Assumes rotation is 6D representation -> converts to rotation matrix.
+    """
+    pos = pose[..., :3]
+    rot_6d = pose[..., 3:9]
+    rot_mat = rotation_6d_to_matrix(rot_6d)  # shape (..., 3, 3)
+    T = torch.eye(4, device=pose.device).expand(*pose.shape[:-1], 4, 4).clone()
+    T[..., :3, :3] = rot_mat
+    T[..., :3, 3] = pos
+    return T
+
+
 def batch_rotation_matrix_from_6d_rotation(sixd_array: Union[torch.tensor, np.ndarray]) -> np.ndarray:
     """
     Convert a batch of 6D rotation representations to quaternions.
@@ -134,142 +149,122 @@ def batch_rotation_matrix_from_6d_rotation(sixd_array: Union[torch.tensor, np.nd
     return quaternions
 
 
-def quaternion_from_6d_rotation(sixd_array: Union[torch.tensor, np.ndarray]) -> torch.tensor:
-    """
-    Convert a batch of 6D rotation representations to quaternions.
+# def quaternion_from_6d_rotation(sixd_array: Union[torch.tensor, np.ndarray]) -> torch.tensor:
+#     """
+#     Convert a batch of 6D rotation representations to quaternions.
+#
+#     Args:
+#         sixd_array: np.ndarray of shape (batch, horizon, 6)
+#
+#     Returns:
+#         quaternions: np.ndarray of shape (batch, horizon, 4)
+#     """
+#     device = None
+#
+#     if isinstance(sixd_array, torch.Tensor):
+#         device = sixd_array.device
+#         sixd_array = sixd_array.cpu().numpy()
+#
+#     batch, horizon, _ = sixd_array.shape
+#     quaternions = np.zeros((batch, horizon, 4), dtype=np.float32)
+#
+#     for b in range(batch):
+#         for t in range(horizon):
+#             sixd = sixd_array[b, t]
+#             rot_mat = sixd_to_rotation_matrix(sixd)
+#             quat = R.from_matrix(rot_mat).as_quat()  # [x, y, z, w]
+#             quaternions[b, t] = quat
+#
+#     return torch.from_numpy(quaternions).to(device)
 
+
+def quaternion_from_6d_rotation(rot6d: Union[torch.tensor, np.ndarray]) -> torch.Tensor:
+    """
+    用 PyTorch3D 快速把 6D 旋转表示转回四元数。
     Args:
-        sixd_array: np.ndarray of shape (batch, horizon, 6)
+        rot6d: (..., 6) 6D 旋转表示
+    Returns:
+        q: (..., 4) 四元数，格式 [x, y, z, w]
+    """
+
+    if isinstance(rot6d, np.ndarray):
+        rot6d = torch.from_numpy(rot6d).float()
+
+    R = rotation_6d_to_matrix(rot6d)
+    R = R.T # align with numpy convention (column-major order)
+    q = matrix_to_quaternion(R)              # (..., 4)
+    return q
+
+# === Approximate Jacobian matrix for transforming pose noise (single sample)
+def compute_approx_jacobian(R_ref: torch.Tensor) -> torch.Tensor:
+    """
+    R_ref: [3, 3] - reference rotation matrix
+    return: [9, 9] - approximate Jacobian matrix for pose transformation
+    """
+    J = torch.zeros(9, 9, device=R_ref.device)
+    R_T = R_ref.T
+    J[0:3, 0:3] = R_T                            # Translation part
+    J[3:9, 3:9] = torch.kron(torch.eye(2, device=R_ref.device), R_T)  # Rotation part (6D)
+    return J
+
+# === Main function: transform dual-arm action noise from world frame to reference frame
+def noise_jocabian_transform(epsilon_abs: torch.Tensor, ref_action: torch.Tensor) -> torch.Tensor:
+    """
+    Transform dual-arm action noise from the world frame to a reference frame using Jacobian Transformation.
+
+    Parameters:
+        epsilon_abs: [B, 16, 20] - noise in world/global frame for a single action sequence
+        ref_action:  [20,]    - reference action (used to extract reference rotation matrices)
 
     Returns:
-        quaternions: np.ndarray of shape (batch, horizon, 4)
+        epsilon_rel: [B, 16, 20] - transformed noise in reference frame
     """
-    device = None
+    B, T, _ = epsilon_abs.shape
 
-    if isinstance(sixd_array, torch.Tensor):
-        device = sixd_array.device
-        sixd_array = sixd_array.cpu().numpy()
+    # Extract left/right 6D rotation from single reference action
+    left_rot6d = ref_action[3:9]  # [6,]
+    right_rot6d = ref_action[13:19]  # [6,]
 
-    batch, horizon, _ = sixd_array.shape
-    quaternions = np.zeros((batch, horizon, 4), dtype=np.float32)
+    # Convert to rotation matrices
+    R_left = rotation_6d_to_matrix(left_rot6d).T  # [3, 3]
+    R_right = rotation_6d_to_matrix(right_rot6d).T  # [3, 3]
 
-    for b in range(batch):
-        for t in range(horizon):
-            sixd = sixd_array[b, t]
-            rot_mat = sixd_to_rotation_matrix(sixd)
-            quat = R.from_matrix(rot_mat).as_quat()  # [x, y, z, w]
-            quaternions[b, t] = quat
+    # Compute Jacobians
+    J_left = compute_approx_jacobian(R_left)  # [9, 9]
+    J_right = compute_approx_jacobian(R_right)  # [9, 9]
 
-    return torch.from_numpy(quaternions).to(device)
+    # Expand to match batch size
+    J_left_exp = J_left.unsqueeze(0).expand(B * T, 9, 9)  # [B*T, 9, 9]
+    J_right_exp = J_right.unsqueeze(0).expand(B * T, 9, 9)  # [B*T, 9, 9]
 
+    # Split noise
+    eps_left = epsilon_abs[:, :, 0:9]  # [B, T, 9]
+    eps_gripL = epsilon_abs[:, :, 9:10]  # [B, T, 1]
+    eps_right = epsilon_abs[:, :, 10:19]  # [B, T, 9]
+    eps_gripR = epsilon_abs[:, :, 19:20]  # [B, T, 1]
 
+    # Reshape for batched matmul
+    eps_left_flat = eps_left.reshape(B * T, 9, 1)    # [B*T, 9, 1]
+    eps_right_flat = eps_right.reshape(B * T, 9, 1)  # [B*T, 9, 1]
 
+    # Apply Jacobian transformation: ε_rel = J^T @ ε_abs
+    eps_left_rel_flat = torch.bmm(J_left_exp.transpose(1, 2), eps_left_flat)
+    eps_right_rel_flat = torch.bmm(J_right_exp.transpose(1, 2), eps_right_flat)
 
-class Timer(object):
-    def __init__(self):
-        self._time = None
+    # Reshape back to [B, T, 9]
+    eps_left_rel = eps_left_rel_flat.squeeze(-1).view(B, T, 9)  # [B, T, 9]
+    eps_right_rel = eps_right_rel_flat.squeeze(-1).view(B, T, 9)  # [B, T, 9]
 
-    def __enter__(self):
-        self._start_time = time.time()
-        return self
+    # Gripper noise doesn't need transformation (scalar values)
+    # Reassemble full transformed noise
+    epsilon_rel = torch.cat([
+        eps_left_rel,  # [B, T, 9]
+        eps_gripL,  # [B, T, 1]
+        eps_right_rel,  # [B, T, 9]
+        eps_gripR  # [B, T, 1]
+    ], dim=-1)  # [B, T, 20]
 
-    def __exit__(self, exc_type, exc_value, exc_tb):
-        self._time = time.time() - self._start_time
-
-    def __call__(self):
-        return self._time
-
-
-class WandBLogger(object):
-    @staticmethod
-    def get_default_config(updates=None):
-        config = ConfigDict()
-        config.mode = "online"
-        config.project = "hato"
-        config.entity = "user"
-        config.output_dir = "."
-        config.exp_name = str(datetime.now())[:19].replace(" ", "_")
-        config.random_delay = 0.5
-        config.experiment_id = config_dict.placeholder(str)
-        config.anonymous = config_dict.placeholder(str)
-        config.notes = config_dict.placeholder(str)
-        config.time = str(datetime.now())[:19].replace(" ", "_")
-
-        if updates is not None:
-            config.update(ConfigDict(updates).copy_and_resolve_references())
-        return config
-
-    def __init__(self, config, variant, prefix=None):
-        self.config = self.get_default_config(config)
-
-        for key, val in sorted(self.config.items()):
-            if type(val) != str:
-                continue
-            new_val = _parse(val, variant)
-            if val != new_val:
-                logging.info(
-                    "processing configs: {}: {} => {}".format(key, val, new_val)
-                )
-                setattr(self.config, key, new_val)
-
-                output = flatten_config_dict(self.config, prefix=prefix)
-                variant.update(output)
-
-        if self.config.output_dir == "":
-            self.config.output_dir = tempfile.mkdtemp()
-
-        output = flatten_config_dict(self.config, prefix=prefix)
-        variant.update(output)
-
-        self._variant = copy(variant)
-
-        logging.info(
-            "wandb logging with hyperparameters: \n{}".format(
-                pprint.pformat(
-                    ["{}: {}".format(key, val) for key, val in self.variant.items()]
-                )
-            )
-        )
-
-        if self.config.random_delay > 0:
-            time.sleep(np.random.uniform(0.1, 0.1 + self.config.random_delay))
-
-        self.run = wandb.init(
-            entity=self.config.entity,
-            reinit=True,
-            config=self._variant,
-            project=self.config.project,
-            dir=self.config.output_dir,
-            name=self.config.exp_name,
-            anonymous=self.config.anonymous,
-            monitor_gym=False,
-            notes=self.config.notes,
-            settings=wandb.Settings(
-                start_method="thread",
-                _disable_stats=True,
-            ),
-            mode=self.config.mode,
-        )
-
-        self.logging_step = 0
-
-    def log(self, *args, **kwargs):
-        self.run.log(*args, **kwargs, step=self.logging_step)
-
-    def step(self):
-        self.logging_step += 1
-
-    @property
-    def experiment_id(self):
-        return self.config.experiment_id
-
-    @property
-    def variant(self):
-        return self._variant
-
-    @property
-    def output_dir(self):
-        return self.config.output_dir
+    return epsilon_rel
 
 def define_flags_with_default(**kwargs):
     for key, val in kwargs.items():
@@ -643,24 +638,6 @@ def quaternion_to_6d_rotation(q: Union[torch.tensor, np.ndarray]) -> torch.Tenso
     rot6d = matrix_to_rotation_6d(R)         # (..., 6)
     return rot6d
 
-# def quaternion_from_6d_rotation(rot6d: Union[torch.tensor, np.ndarray]) -> torch.Tensor:
-#     """
-#     用 PyTorch3D 快速把 6D 旋转表示转回四元数。
-#     Args:
-#         rot6d: (..., 6) 6D 旋转表示
-#     Returns:
-#         q: (..., 4) 四元数，格式 [x, y, z, w]
-#     """
-#
-#     if isinstance(rot6d, np.ndarray):
-#         rot6d = torch.from_numpy(rot6d).float()
-#
-#     # 1) 6D -> 3x3 旋转矩阵 (内部已做 Gram-Schmidt 正交化)
-#     R = rotation_6d_to_matrix(rot6d)         # (..., 3, 3)
-#     # 2) 旋转矩阵 -> 四元数
-#     q = matrix_to_quaternion(R)              # (..., 4)
-#     return q
-
 
 
 def get_abs_traj_from_delta(traj_delta, initial_traj, device=None):
@@ -772,6 +749,114 @@ def kinematic_func_test():
     assert np.all(pos_error < 1e-3), "Position error too large"
     assert np.all(orient_error < 1e-2), "Orientation error too large"
     assert np.all(success_flags), "Some IK solutions failed"
+
+
+
+class Timer(object):
+    def __init__(self):
+        self._time = None
+
+    def __enter__(self):
+        self._start_time = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_tb):
+        self._time = time.time() - self._start_time
+
+    def __call__(self):
+        return self._time
+
+
+class WandBLogger(object):
+    @staticmethod
+    def get_default_config(updates=None):
+        config = ConfigDict()
+        config.mode = "online"
+        config.project = "hato"
+        config.entity = "user"
+        config.output_dir = "."
+        config.exp_name = str(datetime.now())[:19].replace(" ", "_")
+        config.random_delay = 0.5
+        config.experiment_id = config_dict.placeholder(str)
+        config.anonymous = config_dict.placeholder(str)
+        config.notes = config_dict.placeholder(str)
+        config.time = str(datetime.now())[:19].replace(" ", "_")
+
+        if updates is not None:
+            config.update(ConfigDict(updates).copy_and_resolve_references())
+        return config
+
+    def __init__(self, config, variant, prefix=None):
+        self.config = self.get_default_config(config)
+
+        for key, val in sorted(self.config.items()):
+            if type(val) != str:
+                continue
+            new_val = _parse(val, variant)
+            if val != new_val:
+                logging.info(
+                    "processing configs: {}: {} => {}".format(key, val, new_val)
+                )
+                setattr(self.config, key, new_val)
+
+                output = flatten_config_dict(self.config, prefix=prefix)
+                variant.update(output)
+
+        if self.config.output_dir == "":
+            self.config.output_dir = tempfile.mkdtemp()
+
+        output = flatten_config_dict(self.config, prefix=prefix)
+        variant.update(output)
+
+        self._variant = copy(variant)
+
+        logging.info(
+            "wandb logging with hyperparameters: \n{}".format(
+                pprint.pformat(
+                    ["{}: {}".format(key, val) for key, val in self.variant.items()]
+                )
+            )
+        )
+
+        if self.config.random_delay > 0:
+            time.sleep(np.random.uniform(0.1, 0.1 + self.config.random_delay))
+
+        self.run = wandb.init(
+            entity=self.config.entity,
+            reinit=True,
+            config=self._variant,
+            project=self.config.project,
+            dir=self.config.output_dir,
+            name=self.config.exp_name,
+            anonymous=self.config.anonymous,
+            monitor_gym=False,
+            notes=self.config.notes,
+            settings=wandb.Settings(
+                start_method="thread",
+                _disable_stats=True,
+            ),
+            mode=self.config.mode,
+        )
+
+        self.logging_step = 0
+
+    def log(self, *args, **kwargs):
+        self.run.log(*args, **kwargs, step=self.logging_step)
+
+    def step(self):
+        self.logging_step += 1
+
+    @property
+    def experiment_id(self):
+        return self.config.experiment_id
+
+    @property
+    def variant(self):
+        return self._variant
+
+    @property
+    def output_dir(self):
+        return self.config.output_dir
 
 
 if __name__ == "__main__":

@@ -127,26 +127,9 @@ def visualize_trajectory(left_ee_positions, right_ee_positions, best_trajectory)
     - best_trajectory: (prediction_horizon, 20)
       The best trajectory (1 trajectory).
     """
-    # batch_size, prediction_horizon, action_dim = population_trajectories.shape
-    #
-    # # Separate left and right arm joint angles
-    # left_arm_trajectories = population_trajectories[:, :, :6]  # (batch_size, prediction_horizon, 7)
-    # right_arm_trajectories = population_trajectories[:, :, 7:13]  # (batch_size, prediction_horizon, 7)
-    #
-
-    #
-    # # Compute FK end-effector positions
-    # left_ee_positions, _ = forward_kinematics(left_arm_trajectories)
-    # right_ee_positions, _ = forward_kinematics(right_arm_trajectories)
-    # left_ee_positions = np.array(left_ee_positions)
-    # right_ee_positions = np.array(right_ee_positions)
 
     batch_size = left_ee_positions.shape[0]
 
-    # best_left_arm = best_trajectory[:, :6]  # (prediction_horizon, 7)
-    # best_right_arm = best_trajectory[:, 7:13]  # (prediction_horizon, 7)
-    # best_left_ee_positions, _ = fk_solver(best_left_arm)  # (prediction_horizon, 3)
-    # best_right_ee_positions, _ = fk_solver(best_right_arm)
     best_left_ee_positions = best_trajectory[:, :3]  # (prediction_horizon, 3)
     best_right_ee_positions = best_trajectory[:, 10:13]  # (prediction_horizon, 3)
     best_left_ee_positions = np.array(best_left_ee_positions)
@@ -156,14 +139,14 @@ def visualize_trajectory(left_ee_positions, right_ee_positions, best_trajectory)
     best_left_rot6d_np = best_trajectory[:, 3:9]
     best_right_rot6d_np = best_trajectory[:, 13:19]
 
-    # best_left_rot6d = torch.from_numpy(best_left_rot6d_np).float()
-    # best_right_rot6d = torch.from_numpy(best_right_rot6d_np).float()
-    # left_rot_mats_torch = rotation_6d_to_matrix(best_left_rot6d)  # (T, 3, 3)
-    # right_rot_mats_torch = rotation_6d_to_matrix(best_right_rot6d)
-    # # left_rot_mats = left_rot_mats.detach().numpy()  # Convert to numpy array
-    # # right_rot_mats = right_rot_mats.detach().numpy()
-    # print("left_rot_mats_torch:", left_rot_mats_torch)
-    # print("right_rot_mats_torch:", right_rot_mats_torch)
+    best_left_rot6d_torch = torch.from_numpy(best_left_rot6d_np).float()
+    best_right_rot6d_torch = torch.from_numpy(best_right_rot6d_np).float()
+    left_rot_mats_torch = rotation_6d_to_matrix(best_left_rot6d_torch).T  # (T, 3, 3)
+    right_rot_mats_torch = rotation_6d_to_matrix(best_right_rot6d_torch).T
+    # left_rot_mats = left_rot_mats.detach().numpy()  # Convert to numpy array
+    # right_rot_mats = right_rot_mats.detach().numpy()
+    print("left_rot_mats_torch:", left_rot_mats_torch)
+    print("right_rot_mats_torch:", right_rot_mats_torch)
 
 
     left_rot_mats = np.stack([

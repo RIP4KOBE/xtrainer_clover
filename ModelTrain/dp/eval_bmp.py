@@ -98,7 +98,7 @@ def eval_policy(policy: BaseLowdimPolicy, batch_size=128, l_visualize_strat=None
     vis_action(action, l_visualize_strat, r_visualize_strat)
 
 @click.command()
-@click.option('-c', '--checkpoint', default='/home/zhuoli/dobot_xtrainer/model/bimanual_motion_prior/2025.06.24/00.33.33_train_bimanual_motion_prior/checkpoints/latest.ckpt', required=True)
+@click.option('-c', '--checkpoint', default='/home/zhuoli/dobot_xtrainer/model/bimanual_motion_prior/2025.06.27/15.19.31_train_bimanual_motion_prior/checkpoints/latest.ckpt', required=True)
 @click.option('-o', '--output_dir', default='eval/bimanual_motion_prior', required=True)
 @click.option('-d', '--device', default='cuda:0')
 def main(checkpoint, output_dir, device):

@@ -12,6 +12,8 @@ import hydra
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torchlie as lie
+import torchlie.functional as lieF
 from diffusers.optimization import get_scheduler
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
@@ -21,6 +23,7 @@ from omegaconf import  open_dict
 from ModelTrain.dp.bimanual_motion_prior.base_workspace import BaseWorkspace
 from dataset import LEFT_ARM_6D_INDICES, RIGHT_ARM_6D_INDICES
 from scipy.spatial.transform import Rotation as R
+from liegroups.torch import SE3
 from vis_utils import vis_action
 from jsonschema.exceptions import best_match
 
@@ -29,7 +32,8 @@ from torch.nn.functional import mse_loss
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 from typing import Dict, Tuple
-from utils import fk_solver, align_trajs_to_origin, bimanual_coordinator,bimanual_frame_transform, get_config, get_abs_traj_from_delta,sixd_to_rotation_matrix
+from utils import (fk_solver, align_trajs_to_origin, bimanual_coordinator,bimanual_frame_transform, get_config,
+                   get_abs_traj_from_delta, sixd_to_rotation_matrix, pose_to_SE3, noise_jocabian_transform)
 from vis_utils import visualize_trajectory
 from keypoint_proposer import KeypointProposer
 
@@ -847,17 +851,22 @@ class DiffusionPolicy:
 
         return traj_abs
 
-    def run_diffusion_es(self, stats, obs_deque, obj_img, num_diffusion_iters=None, constraints=None, traj_origin=None,
+    def run_diffusion_es(self, stats, obs_deque, obj_img, num_diffusion_iters=None, reward=None, constraints=None,
+                         traj_origin=None,
                          use_cem=False, cem_iters=20,
                          num_elites=32,
-                         temperature=0.1, visualize=True):
+                         temperature=0.1, visualize=True, composition_strategy: str = 'stochastic-sampling',
+                         bimanual_category: str = 'sym'):
         self.ema_nets.eval()
 
         if not num_diffusion_iters:
             num_diffusion_iters = self.num_diffusion_iters
 
+        if reward is None:
+            reward = self.generate_reward(stats["action"])
+
         if constraints is None:
-            constraints = self.generate_constraints(stats["action"])
+            constraints =  self.coordination_constraints
 
         with torch.no_grad():
             features = []
@@ -933,7 +942,10 @@ class DiffusionPolicy:
             population_trajectories, population_scores, population_info = self.rollout(
                 obs_cond,
                 naction,
+                reward,
                 constraints,
+                composition_strategy,
+                bimanual_category,
                 initial_rollout=True,
                 deterministic=False,
                 noise_scale=noise_scale,
@@ -984,7 +996,10 @@ class DiffusionPolicy:
                 population_trajectories, population_scores, population_info = self.rollout(
                     obs_cond,
                     population_trajectories,
+                    reward,
                     constraints,
+                    composition_strategy,
+                    bimanual_category,
                     initial_rollout=False,
                     deterministic=False,
                     n_trunc_steps=n_trunc_steps,
@@ -1040,7 +1055,10 @@ class DiffusionPolicy:
             self,
             obs_cond,
             naction,
+            reward,
             constraints,
+            composition_strategy,
+            bimanual_category,
             initial_rollout=True,
             deterministic=True,
             n_trunc_steps=5,
@@ -1050,7 +1068,7 @@ class DiffusionPolicy:
             use_guidance=False,
             last_action=None,
             stats=None,
-            gamma = 0.5
+            gamma = 0.5,
     ):
         if initial_rollout:
             timesteps = self.noise_scheduler.timesteps
@@ -1060,53 +1078,87 @@ class DiffusionPolicy:
         if ablate_diffusion and not initial_rollout:
             timesteps = []
 
+        # noise composition configuration
+        assert composition_strategy in [
+            'stochastic-sampling',
+            'guided-sampling',
+        ], f"Invalid composition strategy: {composition_strategy}"
+
+        assert bimanual_category in [
+            'sym', 'asym_l_dom', 'asym_r_dom',], f"Invalid bimanual category: {bimanual_category}"
+
+        MCMC_steps = 1
+        if constraints is not None and composition_strategy == 'stochastic-sampling':
+            MCMC_steps = 4
+
+        start_influence_step = timesteps
+        final_influence_step = 0
+
+        # denoising sampling loop
         for k in timesteps:
+            if k > start_influence_step:
+                # print('SKIPPING TIMESTEP: ', t)
+                continue
+            # MCMC stochastic sampling
+            for i in range(MCMC_steps):
+                # predict noise with bimanual motion prior policy
+                bmp_noise_pred = self.bmp_policy.model(naction, k)
+                modulated_noise = bmp_noise_pred
 
-            # predict noise with bimanual motion priot
-            bmp_noise_pred = self.bmp_policy.model(naction, k)
-            modulated_noise_pred = bmp_noise_pred
+                if not initial_rollout and use_dp_noise:
+                    # predict noise with DP policy
+                    dp_noise_pred = self.ema_nets["noise_pred_net"](
+                        sample=naction, timestep=k, global_cond=obs_cond
+                    )
+                    if isinstance(last_action, np.ndarray):
+                        last_action = torch.from_numpy(last_action).to(self.device)
 
-            if not initial_rollout and use_dp_noise:
-                # predict noise with DP policy
-                dp_noise_pred = self.ema_nets["noise_pred_net"](
-                    sample=naction, timestep=k, global_cond=obs_cond
-                )
-                # modulated_noise_pred = bmp_noise_pred + dp_noise_pred
-                if isinstance(last_action, np.ndarray):
-                    last_action = torch.from_numpy(last_action).to(self.device)
-                # dp_noise_pred = dp_noise_pred - last_action
-                modulated_noise_pred = (1 + gamma) * bmp_noise_pred - gamma * dp_noise_pred
-            elif use_guidance:
-                # 约束梯度计算应基于增量空间
-                g = constraints.calculate_gradient(naction)
-                modulated_noise_pred = (1 + gamma) * bmp_noise_pred - gamma * dp_noise_pred + g  # 在噪声样本上直接应用梯度
+                    # map the noise prediction from absolute to delta via jacobian transformation
+                    dp_noise_pred = noise_jocabian_transform(dp_noise_pred, last_action)
 
-            # # predict noise with classifier-free guidance
-            # noise_pred = self.ema_nets["noise_pred_net"](
-            #     sample=naction, timestep=k, global_cond=obs_cond
-            # )
-            # uncond_noise_pred = self.ema_nets["noise_pred_net"](
-            #     sample=naction, timestep=k, global_cond=torch.zeros_like(obs_cond)
-            # )
-            # # noise_pred = (1 + gamma) * noise_pred - gamma * uncond_noise_pred
-            # noise_pred = uncond_noise_pred
+                    # dp_noise_pred = dp_noise_pred - last_action
+                    modulated_noise = (1 + gamma) * modulated_noise - gamma * dp_noise_pred
 
-            if deterministic:
-                eta = 0.0
-            else:
-                prev_alpha = self.noise_scheduler.alphas[k-1]
-                alpha = self.noise_scheduler.alphas[k]
-                eta = noise_scale * torch.sqrt((1 - prev_alpha) / (1 - alpha)) * \
-                        torch.sqrt((1 - alpha) / prev_alpha)
+                if constraints is not None and k > final_influence_step:
+                    # apply constraints
+                        grad = constraints(naction, last_action, bimanual_category)
+                        if composition_strategy == 'guided-sampling':
+                            guide_ratio = 20
+                        elif composition_strategy == 'stochastic-sampling':
+                            guide_ratio = 60
+                        else:
+                            guide_ratio = 0
+                        modulated_noise = modulated_noise + guide_ratio * grad # apply gradient guidance
 
-            # inverse diffusion step (remove noise)
-            naction = self.noise_scheduler.step(
-                model_output=modulated_noise_pred, timestep=k, sample=naction, eta=eta
-            ).prev_sample
+                if deterministic:
+                    eta = 0.0
+                else:
+                    prev_alpha = self.noise_scheduler.alphas[k-1]
+                    alpha = self.noise_scheduler.alphas[k]
+                    eta = noise_scale * torch.sqrt((1 - prev_alpha) / (1 - alpha)) * \
+                            torch.sqrt((1 - alpha) / prev_alpha)
 
-            # compute scores
-            scores, info = constraints(naction, last_action)
-            # scores, info = compute_constraint_scores(constraints, naction)
+                # Compute previous image: x_t -> x_t-1
+                scheduler_output = self.noise_scheduler.step(model_output=modulated_noise, timestep=k, sample=naction, eta=eta)
+                prev_sample = scheduler_output.prev_sample
+                clean_sample = scheduler_output.pred_original_sample
+
+                if i < MCMC_steps - 1:
+                    # print('mcmc step i: ', i, 'at t: ', t)
+                    std = 1
+                    noise = std * torch.randn(clean_sample.shape, device=clean_sample.device)
+                    naction = self.noise_scheduler.add_noise(clean_sample, noise, k)
+                else:
+                    # print('final diffusion step at t:', t)
+                    naction = prev_sample
+
+                # # inverse diffusion step (remove noise)
+                # naction = self.noise_scheduler.step(
+                #     model_output=modulated_noise_pred, timestep=k, sample=naction, eta=eta
+                # ).prev_sample
+
+            # compute reward scores
+            scores, info = reward(naction, last_action)
 
         return naction, scores, info
 
@@ -1116,7 +1168,7 @@ class DiffusionPolicy:
         population_trajectories = self.noise_scheduler.add_noise(population_trajectories, noise, self.noise_scheduler.timesteps[-t])
         return population_trajectories
 
-    def generate_constraints(self, stats):
+    def generate_reward(self, stats):
         """
         Each constraint is a non-differentiable black-box cost function that maps bimanual trajectory to some scalar cost to be minimized.
         """
@@ -1735,15 +1787,192 @@ class DiffusionPolicy:
 
         return multimodal_plate_wiping
 
-# def compute_constraint_scores(constraints, trajectory):
-#     all_info = {}
-#     total_cost = torch.zeros(trajectory.shape[0], device=trajectory.device)
-#     for constraint in constraints:
-#         cost, info = constraint(trajectory)
-#         total_cost += cost
-#         all_info.update(info)
-#     return total_cost, all_info
+    # def coordination_constraints(self, naction, last_action=None, bimanual_category='sym'):
+    #     """
+    #     Compute the bimanual coordination constraint gradient for the predicted diffusion action.
+    #     :param naction: Tensor of shape (batch, 16, 20), bimanual action predicted from diffusion p[olicy.
+    #                        Each action consists of 16 timesteps, and each timestep has 20 eef pose with 6d rotation
+    #                        (10 for the left arm, 10 for the right arm).
+    #            last_action: Tensor of shape (20,), the last executed action, desired relative pose can be computed from it.
+    #            bimanual_category: str, the bimanual category of the action, e.g., 'sym', 'asym_l_dom', 'asym_r_dom',
+    #            to determine which types of constraints should be used.
+    #     :return: bimanual coordination constraint gradient for naction.
+    #     """
+    #     B, T, D = naction.shape
+    #     assert D == 20  # left(10D) + right(10D)
+    #
+    #     # Compute desired relative pose from last action
+    #     if last_action is None:
+    #         raise ValueError("last_action must be provided to compute desired relative pose⋆")
+    #
+    #     with torch.enable_grad():
+    #         naction = naction.clone().detach().requires_grad_(True)
+    #
+    #         # Split actions into left and right arms
+    #         l_pose = pose_to_SE3(naction[:, :, :9])  # (batch, pred_horizon, 4, 4)
+    #         r_pose = pose_to_SE3(naction[:, :, 10:19])  # (batch, pred_horizon, 4, 4)
+    #         xi_L = SE3.from_matrix(l_pose)
+    #         xi_R = SE3.from_matrix(r_pose)
+    #
+    #         last_L = last_action[:9].unsqueeze(0).unsqueeze(0).expand(B, -1, -1)
+    #         last_R = last_action[10:19].unsqueeze(0).unsqueeze(0).expand(B, -1, -1)
+    #         xi_rel_desired = SE3.from_matrix(torch.linalg.inv(last_L) @ last_R)
+    #
+    #         if bimanual_category == 'asym_l_dom':
+    #             # ξ_rel = ξ_L⁻¹ ⋅ ξ_R
+    #             xi_rel = xi_L.inv().dot(xi_R)
+    #             delta = xi_rel.inv().dot(xi_rel_desired)
+    #         elif bimanual_category == 'asym_r_dom':
+    #             # ξ_rel = ξ_R⁻¹ ⋅ ξ_L
+    #             xi_rel = xi_R.inv().dot(xi_L)
+    #             delta = xi_rel.inv().dot(xi_rel_desired.inv())
+    #         elif bimanual_category == 'sym':
+    #             # ξ_L⁻¹ ⋅ ξ_R ≈ ξ_rel_star
+    #             delta = xi_L.inv().dot(xi_R).dot(xi_rel_desired.inv())
+    #         else:
+    #             raise ValueError(f"Unknown bimanual category: {bimanual_category}")
+    #
+    #         delta = delta.log()  # (B, T, 6)
+    #         loss = (delta ** 2).sum(dim=2)  # L2 norm squared → (B, T)
+    #         loss = loss.mean(dim=1)  # (B,)
+    #
+    #         # Compute gradient
+    #         grad = torch.autograd.grad(loss, naction, grad_outputs=torch.ones_like(loss), create_graph=False)[0]
+    #
+    #     return grad
 
+    # def coordination_constraints(
+    #         self,
+    #         naction: torch.Tensor,
+    #         last_action: torch.Tensor,
+    #         bimanual_category: str = 'sym'
+    # ) -> torch.Tensor:
+    #     """
+    #     Compute the bimanual coordination constraint gradient for predicted action.
+    #
+    #     Args:
+    #         naction (Tensor): (B, T, 20) predicted bimanual action.
+    #         last_action (Tensor): (20,) single previous bimanual action (left + right 10D).
+    #         bimanual_category (str): 'sym', 'asym_l_dom', or 'asym_r_dom'.
+    #
+    #     Returns:
+    #         grad (Tensor): Gradient of coordination constraint w.r.t naction, shape (B, T, 20)
+    #     """
+    #     B, T, D = naction.shape
+    #     assert D == 20, "Expected 20D pose per frame (10D left + 10D right)"
+    #
+    #     if last_action is None:
+    #         raise ValueError("last_action must be provided to compute desired relative pose.")
+    #
+    #     with torch.enable_grad():
+    #         naction = naction.clone().detach().requires_grad_(True)
+    #
+    #         # Extract left and right pose (first 9D assumed to be SE(3) 10D rep w/o gripper)
+    #         l_pose = naction[:, :, :9]
+    #         r_pose = naction[:, :, 10:19]
+    #
+    #         # Convert to SE(3) matrices (shape: B, T, 4, 4)
+    #         T_L = SE3.from_pose_vector(l_pose)  # Custom: wrap pose_to_SE3 inside
+    #         T_R = SE3.from_pose_vector(r_pose)
+    #
+    #         # Compute desired relative pose from last action (shape: 4x4 matrices)
+    #         last_T_L = SE3.from_pose_vector(last_action[:9].unsqueeze(0))  # shape: (1, 4, 4)
+    #         last_T_R = SE3.from_pose_vector(last_action[10:19].unsqueeze(0))
+    #
+    #         T_rel_desired = last_T_L.inv().dot(last_T_R)  # shape: (1, 4, 4) → broadcastable
+    #
+    #         if bimanual_category == 'asym_l_dom':
+    #             T_rel = T_L.inv().dot(T_R)
+    #             delta = T_rel.inv().dot(T_rel_desired)
+    #         elif bimanual_category == 'asym_r_dom':
+    #             T_rel = T_R.inv().dot(T_L)
+    #             delta = T_rel.inv().dot(T_rel_desired.inv())
+    #         elif bimanual_category == 'sym':
+    #             delta = T_L.inv().dot(T_R).dot(T_rel_desired.inv())
+    #         else:
+    #             raise ValueError(f"Unknown bimanual category: {bimanual_category}")
+    #
+    #         # Compute twist error (log map), shape: (B, T, 6)
+    #         xi = delta.log()
+    #
+    #         # Compute L2 norm squared
+    #         loss = (xi ** 2).sum(dim=-1)  # (B, T)
+    #         loss = loss.mean(dim=1)  # (B,)
+    #
+    #         # Backprop gradient
+    #         grad = torch.autograd.grad(
+    #             loss,
+    #             naction,
+    #             grad_outputs=torch.ones_like(loss),
+    #             create_graph=False
+    #         )[0]
+    #
+    #     return grad
+
+
+    def coordination_constraints(
+            self,
+            naction: torch.Tensor,
+            last_action: torch.Tensor,
+            bimanual_category: str = 'sym'
+    ) -> torch.Tensor:
+        """
+        Compute the bimanual coordination constraint gradient using torchlie.
+
+        Args:
+            naction (Tensor): (B, T, 20) predicted bimanual action.
+            last_action (Tensor): (20,) previous bimanual action (left + right 10D).
+            bimanual_category (str): 'sym', 'asym_l_dom', or 'asym_r_dom'.
+
+        Returns:
+            grad (Tensor): Gradient of coordination constraint w.r.t naction, shape (B, T, 20)
+        """
+        B, T, D = naction.shape
+        assert D == 20, "Expected 20D pose per frame (10D left + 10D right)"
+        if last_action is None:
+            raise ValueError("last_action must be provided to compute desired relative pose.")
+
+        with torch.enable_grad():
+            naction = naction.clone().detach().requires_grad_(True)
+
+            l_pose = naction[:, :, :9].reshape(B * T, 9)  # (B*T, 9)
+            r_pose = naction[:, :, 10:19].reshape(B * T, 9)  # (B*T, 9)
+
+            T_L = lie.SE3.from_matrix(pose_to_SE3(l_pose))  # (B*T,4,4)
+            T_R = lie.SE3.from_matrix(pose_to_SE3(r_pose))  # (B*T,4,4)
+
+            last_L = lie.SE3.from_matrix(pose_to_SE3(last_action[:9].unsqueeze(0)))  # (1,9)
+            last_R = lie.SE3.from_matrix(pose_to_SE3(last_action[10:19].unsqueeze(0)))
+            T_rel_desired = last_L.inv().compose(last_R)
+            T_rel_desired = T_rel_desired.expand(B * T) # (B*T, 4, 4)
+
+            if bimanual_category == 'asym_l_dom':
+                # Left leads: T_rel = T_L^{-1} * T_R should match T_rel_desired
+                T_rel = T_L.inv().compose(T_R)
+                delta = T_rel.inv().compose(T_rel_desired)
+            elif bimanual_category == 'asym_r_dom':
+                # Right leads: T_rel = T_R^{-1} * T_L should match T_rel_desired
+                T_rel = T_R.inv().compose(T_L)
+                delta = T_rel.inv().compose(T_rel_desired.inv())
+            elif bimanual_category == 'sym':
+                delta = T_L.inv().compose(T_R).compose(T_rel_desired.inv())
+            else:
+                raise ValueError(f"Unknown bimanual category: {bimanual_category}")
+
+            # Compute twist error on SE(3) manifold
+            xi = delta.log()   # (B*T, 6) - 6D twist vector
+
+            loss = (xi ** 2).sum(dim=-1)  # (B*T,)
+            loss = loss.view(B, T).mean(dim=1)  # (B,)
+
+            grad = torch.autograd.grad(
+                loss,
+                naction,
+                grad_outputs=torch.ones_like(loss),
+                create_graph=False
+            )[0]
+
+        return grad
 
 class BaseLowdimPolicy(ModuleAttrMixin):
     # ========= inference  ============
@@ -2111,7 +2340,7 @@ class UnConditionalBimanualMotionPrior(BaseLowdimPolicy):
 
         if num_inference_steps is None:
             num_inference_steps = noise_scheduler.config.num_train_timesteps
-        self.num_inference_steps = 100
+        self.num_inference_steps = 10
 
     # ========= inference  ============
     def unconditional_sample(self,

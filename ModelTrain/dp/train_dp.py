@@ -843,18 +843,18 @@ if __name__ == "__main__":
     args.add_argument("--base_path", type=str, default="/shared")
     args.add_argument("--data_name", type=str, default="test_data")
     args.add_argument("--data_path", type=str,
-                      default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data/dp_plate_wiping_eef_delta_20250617"
+                      default="/home/zhuoli/dobot_xtrainer/ModelTrain/dp/split_data/multimodal_dp_plate_wiping_eef_absolute_6d_20250626"
                               "/collect_data")
     args.add_argument("--data_prefix", type=str, default=None)
     args.add_argument("--model_save_path", type=str,
                       default="/home/zhuoli/dobot_xtrainer/model"
-                              "/dp_plate_wiping_eef_6d_delta_normalization_20250619")
+                              "/multimodal_dp_plate_wiping_eef_absolute_6d_20250626")
 
     args.add_argument("--clip_far", type=boolean_string, default=False)
     args.add_argument("--color_jitter", type=boolean_string, default=False)
     args.add_argument("--predict_eef_delta", type=boolean_string, default=False)
     args.add_argument("--predict_eef_6d", type=boolean_string, default=True)
-    args.add_argument("--predict_eef_6d_delta", type=boolean_string, default=True)
+    args.add_argument("--predict_eef_6d_delta", type=boolean_string, default=False)
     args.add_argument("--predict_pos_delta", type=boolean_string, default=False)
     args.add_argument("--use_ddim", type=boolean_string, default=True)
 

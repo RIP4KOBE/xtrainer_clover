@@ -94,8 +94,8 @@ training:
   device: "cuda:0"
   seed: 42
   debug: False
-  resume: False
-  resume_path: "/home/zhuoli/dobot_xtrainer/model/bimanual_motion_prior/2025.06.24/00.33.33_train_bimanual_motion_prior/checkpoints/latest.ckpt"  # optimization
+  resume: True
+  resume_path: "/home/zhuoli/dobot_xtrainer/model/bimanual_motion_prior/2025.06.26/15.18.44_train_bimanual_motion_prior/checkpoints/latest.ckpt"  # optimization
   lr_scheduler: cosine
   # Transformer needs LR warmup
   lr_warmup_steps: 1000
@@ -116,7 +116,7 @@ training:
 
 logging:
   project: bimanual_motion_prior_debug
-  resume: False
+  resume: True
   mode: online
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}
   tags: ["${name}", "${exp_name}"]
