@@ -934,7 +934,6 @@ class DiffusionPolicy:
                 deterministic=False,
                 noise_scale=noise_scale,
                 last_action=traj_origin,
-                stats=stats["action"]
             )
 
             # visualize the initial population for debugging
@@ -989,7 +988,6 @@ class DiffusionPolicy:
                     n_trunc_steps=n_trunc_steps,
                     noise_scale=noise_scale,
                     last_action=traj_origin,
-                    stats=stats["action"]
                 )
 
         time2 = time.time()
@@ -1045,33 +1043,24 @@ class DiffusionPolicy:
             deterministic=True,
             n_trunc_steps=5,
             noise_scale=1.0,
-            ablate_diffusion=False,
             use_dp_noise=False,
-            use_guidance=True,
+            use_guidance=False,
             last_action=None,
-            stats=None,
             gamma = 0.5,
     ):
+        # Validate strategy types
+        assert composition_strategy in ['stochastic-sampling', 'guided-sampling'], \
+            f"Invalid composition strategy: {composition_strategy}"
+        assert bimanual_category in ['sym', 'asym_l_dom', 'asym_r_dom'], \
+            f"Invalid bimanual category: {bimanual_category}"
+
+        # Determine timesteps
         if initial_rollout:
             timesteps = self.noise_scheduler.timesteps
         else:
             timesteps = self.noise_scheduler.timesteps[-n_trunc_steps:]
 
-        if ablate_diffusion and not initial_rollout:
-            timesteps = []
-
-        # noise composition configuration
-        assert composition_strategy in [
-            'stochastic-sampling',
-            'guided-sampling',
-        ], f"Invalid composition strategy: {composition_strategy}"
-
-        assert bimanual_category in [
-            'sym', 'asym_l_dom', 'asym_r_dom',], f"Invalid bimanual category: {bimanual_category}"
-
-        MCMC_steps = 1
-        if constraints is not None and composition_strategy == 'stochastic-sampling':
-            MCMC_steps = 4
+        MCMC_steps = 4 if not initial_rollout and composition_strategy == 'stochastic-sampling' else 1
 
         start_influence_step = int(torch.max(timesteps))
         final_influence_step = 0
@@ -1085,39 +1074,42 @@ class DiffusionPolicy:
 
         # denoising sampling loop
         for k in timesteps:
-            if k > start_influence_step:
-                # print('SKIPPING TIMESTEP: ', t)
-                continue
+            # if k > start_influence_step:
+            #     # print('SKIPPING TIMESTEP: ', t)
+            #     continue
             # MCMC stochastic sampling
             for i in range(MCMC_steps):
                 # predict noise with bimanual motion prior policy
                 bmp_noise_pred = self.bmp_policy.model(naction, k)
                 modulated_noise = bmp_noise_pred
 
-                if not initial_rollout and use_dp_noise:
-                    # predict noise with DP policy
-                    dp_noise_pred = self.ema_nets["noise_pred_net"](
-                        sample=naction, timestep=k, global_cond=obs_cond
-                    )
-                    if isinstance(last_action, np.ndarray):
-                        last_action = torch.from_numpy(last_action).to(self.device)
+                if not initial_rollout:
+                    if use_dp_noise:
+                        # predict noise with DP policy
+                        dp_noise_pred = self.ema_nets["noise_pred_net"](
+                            sample=naction, timestep=k, global_cond=obs_cond
+                        )
+                        if isinstance(last_action, np.ndarray):
+                            last_action = torch.from_numpy(last_action).to(self.device)
 
-                    # map the noise prediction from absolute to delta via jacobian transformation
-                    dp_noise_pred = noise_jocabian_transform(dp_noise_pred, last_action)
+                        # map the noise prediction from absolute to delta via jacobian transformation
+                        dp_noise_pred = noise_jocabian_transform(dp_noise_pred, last_action)
 
-                    # dp_noise_pred = dp_noise_pred - last_action
-                    modulated_noise = (1 + gamma) * modulated_noise - gamma * dp_noise_pred
+                        # dp_noise_pred = dp_noise_pred - last_action
+                        modulated_noise = (1 + gamma) * dp_noise_pred - gamma * modulated_noise
 
-                if constraints is not None and use_guidance:
-                    # apply constraints
-                        grad = constraints(naction, last_action, bimanual_category)
-                        if composition_strategy == 'guided-sampling':
-                            guide_ratio = 3.5
-                        elif composition_strategy == 'stochastic-sampling':
-                            guide_ratio = 60
-                        else:
-                            guide_ratio = 0
-                        modulated_noise = modulated_noise + guide_ratio * grad # apply gradient guidance
+                    if constraints is not None and use_guidance:
+                        # apply constraints
+                            grad = constraints(naction, last_action, bmp_noise_pred, k, bimanual_category)
+                            if composition_strategy == 'guided-sampling':
+                                guide_ratio = 20
+                            elif composition_strategy == 'stochastic-sampling':
+                                guide_ratio = 60
+                            else:
+                                guide_ratio = 0
+                            # modulated_noise = modulated_noise + guide_ratio * grad # apply gradient guidance
+                            modulated_noise = (modulated_noise - (1 - self.noise_scheduler.alphas_cumprod[k]).sqrt() *
+                                               grad * guide_ratio) # classifier guidance-DDIM version
 
                 if deterministic:
                     eta = 0.0
@@ -1132,7 +1124,7 @@ class DiffusionPolicy:
                 prev_sample = scheduler_output.prev_sample
                 clean_sample = scheduler_output.pred_original_sample
 
-                if i < MCMC_steps - 1:
+                if not initial_rollout and i < MCMC_steps - 1:
                     # print('mcmc step i: ', i, 'at t: ', t)
                     std = 1
                     noise = std * torch.randn(clean_sample.shape, device=clean_sample.device)
@@ -2085,7 +2077,10 @@ class DiffusionPolicy:
             self,
             naction: torch.Tensor,
             last_action: torch.Tensor,
-            bimanual_category: str = 'sym'
+            bmp_noise_pred: torch.Tensor,
+            timesteps: int,
+            bimanual_category: str = 'sym',
+            use_clean_sample: bool = False
     ) -> torch.Tensor:
         """
         Compute the bimanual coordination constraint gradient using torchlie.
@@ -2110,8 +2105,16 @@ class DiffusionPolicy:
 
         with torch.enable_grad():
             naction = naction.clone().requires_grad_(True)
-            # Unnormalize naction and convert to absolute action
-            unnormalize_naction = self.bmp_policy.normalizer['action'].unnormalize(naction)
+
+            if use_clean_sample:
+                alpha_prod_t = self.noise_scheduler.alphas_cumprod[timesteps]
+                beta_prod_t = 1 - alpha_prod_t
+                clean_sample = (naction - beta_prod_t ** (0.5) * bmp_noise_pred) / alpha_prod_t ** (0.5)
+                unnormalize_naction = self.bmp_policy.normalizer['action'].unnormalize(clean_sample)
+            else:
+                # Unnormalize naction directly
+                unnormalize_naction = self.bmp_policy.normalizer['action'].unnormalize(naction)
+
             abs_traj = get_abs_traj_from_delta(unnormalize_naction, last_action, device=device)
 
             l_pose = abs_traj[:, :, :9].reshape(B * T, 9)  # (B*T, 9)
