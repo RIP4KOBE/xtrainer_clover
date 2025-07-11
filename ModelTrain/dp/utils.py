@@ -7,6 +7,7 @@ import tempfile
 import time
 
 import torch
+import torch.nn.functional as F
 import yaml
 from copy import copy
 from typing import Union
@@ -31,7 +32,6 @@ from pytorch3d.transforms import (
     quaternion_to_matrix,
     matrix_to_quaternion,
     matrix_to_rotation_6d,
-    rotation_6d_to_matrix,
 )
 
 
@@ -89,8 +89,8 @@ def sixd_to_rotation_vector(sixd):
     return rot_vec
 
 
-def sixd_to_rotation_matrix(sixd):
-    """Convert 6D rotation representation to 3D rotation vector using SciPy."""
+def sixd_to_rotation_matrix(sixd: np.ndarray) -> np.ndarray:
+    """Convert 6D rotation representation to rotation matrix using numpy."""
     sixd = np.array(sixd).reshape(3, 2)
     a1, a2 = sixd[:, 0], sixd[:, 1]
 
@@ -105,18 +105,38 @@ def sixd_to_rotation_matrix(sixd):
     return rot_mat
 
 
+# def pose_to_SE3(pose):
+#     """
+#     Convert 10D pose (3D pos + 6D rot) to SE(3) matrix (4x4).
+#     pose: (10,) or (B, 10)
+#     Assumes rotation is 6D representation -> converts to rotation matrix.
+#     """
+#     pos = pose[..., :3]
+#     rot_6d = pose[..., 3:9]
+#     rot_mat = rotation_6d_to_matrix(rot_6d)  # shape (..., 3, 3)
+#     T = torch.eye(4, device=pose.device).expand(*pose.shape[:-1], 4, 4).clone()
+#     T[..., :3, :3] = rot_mat
+#     T[..., :3, 3] = pos
+#     return T
+
 def pose_to_SE3(pose):
     """
-    Convert 10D pose (3D pos + 6D rot) to SE(3) matrix (4x4).
-    pose: (10,) or (B, 10)
-    Assumes rotation is 6D representation -> converts to rotation matrix.
+    Convert 10D pose (3D pos + 6D rot) to torchlie-compatible SE(3) matrix (3x4).
+
+    Args:
+        pose: Tensor of shape (..., 10)
+              where pose[..., :3] is position,
+                    pose[..., 3:9] is 6D rotation representation
+
+    Returns:
+        T: Tensor of shape (..., 3, 4), compatible with torchlie.SE3
     """
-    pos = pose[..., :3]
-    rot_6d = pose[..., 3:9]
-    rot_mat = rotation_6d_to_matrix(rot_6d)  # shape (..., 3, 3)
-    T = torch.eye(4, device=pose.device).expand(*pose.shape[:-1], 4, 4).clone()
-    T[..., :3, :3] = rot_mat
-    T[..., :3, 3] = pos
+    pos = pose[..., :3]  # (..., 3)
+    rot_6d = pose[..., 3:9]  # (..., 6)
+    rot_mat = rotation_6d_to_matrix(rot_6d)  # (..., 3, 3)
+
+    # Combine rotation and translation into a (3, 4) matrix
+    T = torch.cat([rot_mat, pos.unsqueeze(-1)], dim=-1)  # (..., 3, 4)
     return T
 
 
@@ -149,34 +169,25 @@ def batch_rotation_matrix_from_6d_rotation(sixd_array: Union[torch.tensor, np.nd
     return quaternions
 
 
-# def quaternion_from_6d_rotation(sixd_array: Union[torch.tensor, np.ndarray]) -> torch.tensor:
-#     """
-#     Convert a batch of 6D rotation representations to quaternions.
-#
-#     Args:
-#         sixd_array: np.ndarray of shape (batch, horizon, 6)
-#
-#     Returns:
-#         quaternions: np.ndarray of shape (batch, horizon, 4)
-#     """
-#     device = None
-#
-#     if isinstance(sixd_array, torch.Tensor):
-#         device = sixd_array.device
-#         sixd_array = sixd_array.cpu().numpy()
-#
-#     batch, horizon, _ = sixd_array.shape
-#     quaternions = np.zeros((batch, horizon, 4), dtype=np.float32)
-#
-#     for b in range(batch):
-#         for t in range(horizon):
-#             sixd = sixd_array[b, t]
-#             rot_mat = sixd_to_rotation_matrix(sixd)
-#             quat = R.from_matrix(rot_mat).as_quat()  # [x, y, z, w]
-#             quaternions[b, t] = quat
-#
-#     return torch.from_numpy(quaternions).to(device)
+def rotation_6d_to_matrix(d6: torch.Tensor) -> torch.Tensor:
+    """
+    Modified PyTorch version to match NumPy's behavior exactly.
+    """
+    # 重塑为(*, 3, 2)以匹配NumPy的reshape(3, 2)
+    d6_reshaped = d6.view(*d6.shape[:-1], 3, 2)
 
+    # 取第0列和第1列
+    a1 = d6_reshaped[..., :, 0]  # 相当于NumPy的 sixd[:, 0]
+    a2 = d6_reshaped[..., :, 1]  # 相当于NumPy的 sixd[:, 1]
+
+    # Gram-Schmidt正交化
+    b1 = F.normalize(a1, dim=-1)
+    b2 = a2 - (b1 * a2).sum(-1, keepdim=True) * b1
+    b2 = F.normalize(b2, dim=-1)
+    b3 = torch.cross(b1, b2, dim=-1)
+
+    # 使用dim=-1来匹配column_stack的行为
+    return torch.stack((b1, b2, b3), dim=-1)
 
 def quaternion_from_6d_rotation(rot6d: Union[torch.tensor, np.ndarray]) -> torch.Tensor:
     """
@@ -190,8 +201,8 @@ def quaternion_from_6d_rotation(rot6d: Union[torch.tensor, np.ndarray]) -> torch
     if isinstance(rot6d, np.ndarray):
         rot6d = torch.from_numpy(rot6d).float()
 
-    R = rotation_6d_to_matrix(rot6d)
-    R = R.T # align with numpy convention (column-major order)
+    R = rotation_6d_to_matrix(rot6d) # customized rotation_6d_to_matrix() function to align with numpy's convention
+    # R = R.transpose(-1, -2)  # align with numpy convention (column-major order)
     q = matrix_to_quaternion(R)              # (..., 4)
     return q
 
@@ -226,8 +237,8 @@ def noise_jocabian_transform(epsilon_abs: torch.Tensor, ref_action: torch.Tensor
     right_rot6d = ref_action[13:19]  # [6,]
 
     # Convert to rotation matrices
-    R_left = rotation_6d_to_matrix(left_rot6d).T  # [3, 3]
-    R_right = rotation_6d_to_matrix(right_rot6d).T  # [3, 3]
+    R_left = rotation_6d_to_matrix(left_rot6d)  # [3, 3]
+    R_right = rotation_6d_to_matrix(right_rot6d)  # [3, 3]
 
     # Compute Jacobians
     J_left = compute_approx_jacobian(R_left)  # [9, 9]
@@ -637,7 +648,6 @@ def quaternion_to_6d_rotation(q: Union[torch.tensor, np.ndarray]) -> torch.Tenso
     # 2) 矩阵 -> 6D 表示 (取前两列)
     rot6d = matrix_to_rotation_6d(R)         # (..., 6)
     return rot6d
-
 
 
 def get_abs_traj_from_delta(traj_delta, initial_traj, device=None):

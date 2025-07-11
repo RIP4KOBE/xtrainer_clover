@@ -28,8 +28,8 @@ class Args:
     hostname: str = "127.0.0.1"
     show_img: bool = False
     save_data_path = "/media/zhuoli/8ECE-77DB/xtrainer/Datasets/DP/"
-    # project_name = "dp_plate_wiping_eef_delta_20250617"
-    project_name = "multimodal_dp_plate_wiping_eef_absolute_6d_20250626"
+    project_name = "test"
+    # project_name = "multimodal_dp_plate_wiping_eef_absolute_6d_20250626"
     agent_name = "dp"
     dp_save_png = False
     handeye_calibration = False

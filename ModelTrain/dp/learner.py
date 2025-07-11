@@ -20,10 +20,13 @@ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 import diffusers.training_utils as diffuser_utils
 from einops import rearrange, reduce
 from omegaconf import  open_dict
+from torch.cuda import device
+from triton.language import dtype
+
 from ModelTrain.dp.bimanual_motion_prior.base_workspace import BaseWorkspace
 from dataset import LEFT_ARM_6D_INDICES, RIGHT_ARM_6D_INDICES
 from scipy.spatial.transform import Rotation as R
-from liegroups.torch import SE3
+# from liegroups.torch import SE3
 from vis_utils import vis_action
 from jsonschema.exceptions import best_match
 
@@ -40,8 +43,6 @@ from keypoint_proposer import KeypointProposer
 from ModelTrain.dp.bimanual_motion_prior.normalizer import LinearNormalizer, RotSafeNormalizer
 from ModelTrain.dp.bimanual_motion_prior.mask_generator import LowdimMaskGenerator
 from ModelTrain.dp.dataset import normalize_6d_pose, unnormalize_6d_pose, normalize_data, unnormalize_data
-from pytorch3d.transforms import matrix_to_euler_angles
-
 
 
 
@@ -147,7 +148,7 @@ class DiffusionPolicy:
         )
 
         # initialize the bimanual motion prior
-        bmp_checkpoint = "/media/zhuoli/8ECE-77DB/xtrainer/model/BMP/2025.06.24/00.33.33_train_bimanual_motion_prior/checkpoints/latest.ckpt"
+        bmp_checkpoint = "/media/zhuoli/8ECE-77DB/xtrainer/model/BMP/2025.06.27/15.19.31_train_bimanual_motion_prior/checkpoints/latest.ckpt"
         payload = torch.load(open(bmp_checkpoint, 'rb'), pickle_module=dill)
         cfg = payload['cfg']
         with open_dict(cfg):
@@ -844,9 +845,7 @@ class DiffusionPolicy:
         """
         # Convert trajectory to numpy and unnormalize
         traj_delta = self.bmp_policy.normalizer['action'].unnormalize(traj_delta)
-        # last_action = torch.from_numpy(last_action).to(self.device, dtype=torch.float32)
         traj_abs= get_abs_traj_from_delta(traj_delta, last_action, device=device)
-        # traj_delta = traj_delta.reshape(-1, 16, 20)
         traj_abs = traj_abs.detach().cpu().numpy()
 
         return traj_abs
@@ -855,8 +854,8 @@ class DiffusionPolicy:
                          traj_origin=None,
                          use_cem=False, cem_iters=20,
                          num_elites=32,
-                         temperature=0.1, visualize=True, composition_strategy: str = 'stochastic-sampling',
-                         bimanual_category: str = 'sym'):
+                         temperature=0.1, visualize=True, composition_strategy: str = 'guided-sampling',
+                         bimanual_category: str = 'asym_l_dom'):
         self.ema_nets.eval()
 
         if not num_diffusion_iters:
@@ -903,20 +902,6 @@ class DiffusionPolicy:
             obs_features = torch.cat(features, dim=-1)
             obs_cond = obs_features.flatten(start_dim=1)
             obs_cond = obs_cond.repeat(self.sampling_batch_size, 1)
-            # Add Gaussian noise to obs condition to enhance trajectory diversity
-            # obs_noise_level = 1.0
-            # obs_cond = obs_cond + obs_noise_level * torch.randn_like(obs_cond)
-            # obs_cond = torch.randn_like(obs_cond)
-
-            # scaling_factor = 0.25
-            # obs_cond = obs_cond * scaling_factor
-
-            # alpha = 0.25 # [0.3, 0.7]
-            # obs_cond = alpha * obs_cond + (1 - alpha) * torch.randn_like(obs_cond)
-
-            # object-related keypoints extraction
-
-            # get keypoints
 
             # get object-related keypoints
             # keypoint_config = get_config(config_path="/home/zhuoli/xtrainer_clover/configs/keypoint_config.yaml")
@@ -926,7 +911,6 @@ class DiffusionPolicy:
             # Diffusion-es parameter initialization
             trunc_step_schedule = np.linspace(5, 1, cem_iters).astype(int)
             noise_scale = 0.1
-
             bmp_action_dim = 20
 
             noisy_action = torch.randn(
@@ -1014,19 +998,15 @@ class DiffusionPolicy:
         print("best score", population_scores.min())
         print("traj_origin shape", traj_origin.shape)
 
-
         # unnormalize and get abs action
         population_trajectories = self.process_trajectory(population_trajectories, last_action=traj_origin, device=self.device)
-
-        # # align the trajectory
-        # population_trajectories, left_ee_positions, right_ee_positions = align_trajs_to_origin(population_trajectories, traj_origin)
 
         # select the best trajectory
         best_trajectory = population_trajectories[population_scores.argmin()]
 
         # schedule the executed trajectory
         best_trajectory = bimanual_coordinator(
-            mode="left_eef_pos",
+            mode="bimanual",
             traj_origin=traj_origin,
             best_trajectory=best_trajectory
         )
@@ -1036,6 +1016,8 @@ class DiffusionPolicy:
             left_ee_positions = population_trajectories[:, :, :3]
             right_ee_positions = population_trajectories[:, :, 10:13]
             visualize_trajectory(left_ee_positions, right_ee_positions, best_trajectory)
+            # visualize_trajectory(left_ee_positions, right_ee_positions, np.tile(traj_origin, (best_trajectory.shape[0], 1)),)
+
 
 
         # only take action_horizon number of actions
@@ -1065,7 +1047,7 @@ class DiffusionPolicy:
             noise_scale=1.0,
             ablate_diffusion=False,
             use_dp_noise=False,
-            use_guidance=False,
+            use_guidance=True,
             last_action=None,
             stats=None,
             gamma = 0.5,
@@ -1091,8 +1073,15 @@ class DiffusionPolicy:
         if constraints is not None and composition_strategy == 'stochastic-sampling':
             MCMC_steps = 4
 
-        start_influence_step = timesteps
+        start_influence_step = int(torch.max(timesteps))
         final_influence_step = 0
+
+        # select which noise scheduler to use: dp or bmp
+        use_bmp_scheduler = False
+        if use_bmp_scheduler:
+            self.modulate_scheduler = self.bmp_policy.noise_scheduler
+        else:
+            self.modulate_scheduler = self.noise_scheduler
 
         # denoising sampling loop
         for k in timesteps:
@@ -1119,11 +1108,11 @@ class DiffusionPolicy:
                     # dp_noise_pred = dp_noise_pred - last_action
                     modulated_noise = (1 + gamma) * modulated_noise - gamma * dp_noise_pred
 
-                if constraints is not None and k > final_influence_step:
+                if constraints is not None and use_guidance:
                     # apply constraints
                         grad = constraints(naction, last_action, bimanual_category)
                         if composition_strategy == 'guided-sampling':
-                            guide_ratio = 20
+                            guide_ratio = 3.5
                         elif composition_strategy == 'stochastic-sampling':
                             guide_ratio = 60
                         else:
@@ -1139,7 +1128,7 @@ class DiffusionPolicy:
                             torch.sqrt((1 - alpha) / prev_alpha)
 
                 # Compute previous image: x_t -> x_t-1
-                scheduler_output = self.noise_scheduler.step(model_output=modulated_noise, timestep=k, sample=naction, eta=eta)
+                scheduler_output = self.modulate_scheduler.step(model_output=modulated_noise, timestep=k, sample=naction)
                 prev_sample = scheduler_output.prev_sample
                 clean_sample = scheduler_output.pred_original_sample
 
@@ -1147,7 +1136,7 @@ class DiffusionPolicy:
                     # print('mcmc step i: ', i, 'at t: ', t)
                     std = 1
                     noise = std * torch.randn(clean_sample.shape, device=clean_sample.device)
-                    naction = self.noise_scheduler.add_noise(clean_sample, noise, k)
+                    naction = self.modulate_scheduler.add_noise(clean_sample, noise, k)
                 else:
                     # print('final diffusion step at t:', t)
                     naction = prev_sample
@@ -1165,7 +1154,7 @@ class DiffusionPolicy:
 
     def renoise(self, population_trajectories, t):
         noise = torch.randn(population_trajectories.shape, device=self.device)
-        population_trajectories = self.noise_scheduler.add_noise(population_trajectories, noise, self.noise_scheduler.timesteps[-t])
+        population_trajectories = self.modulate_scheduler.add_noise(population_trajectories, noise, self.noise_scheduler.timesteps[-t])
         return population_trajectories
 
     def generate_reward(self, stats):
@@ -1782,10 +1771,111 @@ class DiffusionPolicy:
             scores = -torch.as_tensor(scores, device=device)
             return scores, {}
 
+        def lower_both_hands(trajectory, last_action):
+            """
+            Compute the reward for "lower both hands evenly" based on vertical displacement (z-axis)
+            and symmetry between arms.
+
+            :param trajectory: Tensor of shape (batch, 16, 14), representing bimanual motion trajectories.
+                               Each trajectory has 16 timesteps, and each timestep has 14 joint angles
+                               (7 for the left arm, 7 for the right arm).
+            :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
+            """
+            # Convert trajectory to numpy and unnormalize
+            device = trajectory.device
+            trajectory = self.process_trajectory(trajectory, last_action, device=device)
+            left_trajectory = trajectory[:, :, LEFT_ARM_6D_INDICES]
+            right_trajectory = trajectory[:, :, RIGHT_ARM_6D_INDICES]
+            left_ee_position = left_trajectory[:, :, :3]
+            right_ee_position = right_trajectory[:, :, :3]
+            scores = np.zeros(left_ee_position.shape[0])  # batch size
+
+            for i in range(left_ee_position.shape[0]):
+                # Get initial and final z-positions (vertical) of both hands
+                left_z_start = left_ee_position[i, 0, 2]
+                left_z_end = left_ee_position[i, -1, 2]
+                right_z_start = right_ee_position[i, 0, 2]
+                right_z_end = right_ee_position[i, -1, 2]
+
+                # Compute amount lowered
+                left_drop = left_z_start - left_z_end
+                right_drop = right_z_start - right_z_end
+
+                # left_drop =  left_z_end - left_z_start
+                # right_drop = right_z_end - right_z_start
+
+                # Compute discrepancy between hands (should be minimal for even lowering)
+                # symmetry_penalty = np.abs(left_drop - right_drop)
+
+                # Reward: total lowering minus symmetry penalty
+                # lowering_reward = (left_drop + right_drop) - symmetry_penalty
+                lowering_reward = (left_drop + right_drop)
+                scores[i] = lowering_reward
+
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
+        def lower_both_hands_vertical(trajectory, last_action):
+            """
+            Compute the reward for "lower both hands evenly and vertically" based on:
+            - z-axis displacement (reward)
+            - xy displacement during lowering (penalty)
+
+            :param trajectory: Tensor of shape (batch, 16, 20), representing bimanual motion trajectories.
+            :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
+            """
+            device = trajectory.device
+            trajectory = self.process_trajectory(trajectory, last_action, device=device)
+
+            left_trajectory = trajectory[:, :, LEFT_ARM_6D_INDICES]
+            right_trajectory = trajectory[:, :, RIGHT_ARM_6D_INDICES]
+            left_ee_position = left_trajectory[:, :, :3]  # (batch, time, xyz)
+            right_ee_position = right_trajectory[:, :, :3]
+
+            scores = np.zeros(left_ee_position.shape[0])  # batch size
+
+            for i in range(left_ee_position.shape[0]):
+                # Initial and final positions
+                left_start = left_ee_position[i, 0]
+                left_end = left_ee_position[i, -1]
+                right_start = right_ee_position[i, 0]
+                right_end = right_ee_position[i, -1]
+
+                # z-axis drops
+                left_drop = left_start[2] - left_end[2]
+                right_drop = right_start[2] - right_end[2]
+
+                # xy displacement penalty (Euclidean distance)
+                left_xy_shift = np.linalg.norm(left_start[:2] - left_end[:2])
+                right_xy_shift = np.linalg.norm(right_start[:2] - right_end[:2])
+
+                # Total score: encourage vertical drop, penalize xy movement
+                lowering_reward = (left_drop + right_drop)
+                xy_penalty = (left_xy_shift + right_xy_shift)
+
+                # lowering_reward = right_drop
+                # xy_penalty = right_xy_shift
+
+                # You can tune the weight of penalty
+                # scores[i] = lowering_reward - 5 * xy_penalty
+
+                # Use min drop and max xy shift to ensure both arms behave well
+                combined_drop = min(left_drop, right_drop)
+                combined_xy_shift = max(left_xy_shift, right_xy_shift)
+                # combined_drop = (left_drop * right_drop) / (left_drop + right_drop + 1e-6)  # harmonic mean
+                # combined_xy_shift = (left_xy_shift ** 2 + right_xy_shift ** 2) ** 0.5  # L2 norm
+
+                # Final reward score
+                scores[i] = combined_drop - combined_xy_shift
+
+            # Negative because higher scores mean lower reward
+            scores = -torch.as_tensor(scores, device=device)
+            return scores, {}
+
         # </editor-fold>
 
 
-        return multimodal_plate_wiping
+        return lower_both_hands_vertical
 
     # def coordination_constraints(self, naction, last_action=None, bimanual_category='sym'):
     #     """
@@ -1910,6 +2000,87 @@ class DiffusionPolicy:
     #     return grad
 
 
+    # def coordination_constraints(
+    #         self,
+    #         naction: torch.Tensor,
+    #         last_action: torch.Tensor,
+    #         bimanual_category: str = 'sym'
+    # ) -> torch.Tensor:
+    #     """
+    #     Compute the bimanual coordination constraint gradient using torchlie.
+    #
+    #     Args:
+    #         naction (Tensor): (B, T, 20) predicted bimanual action.
+    #         last_action (Tensor): (20,) previous bimanual action (left + right 10D).
+    #         bimanual_category (str): 'sym', 'asym_l_dom', or 'asym_r_dom'.
+    #
+    #     Returns:
+    #         grad (Tensor): Gradient of coordination constraint w.r.t naction, shape (B, T, 20)
+    #     """
+    #     B, T, D = naction.shape
+    #     assert D == 20, "Expected 20D pose per frame (10D left + 10D right)"
+    #     if last_action is None:
+    #         raise ValueError("last_action must be provided to compute desired relative pose.")
+    #     if isinstance(last_action, np.ndarray):
+    #         last_action = torch.tensor(last_action, dtype=naction.dtype, device=naction.device)
+    #
+    #     with torch.enable_grad():
+    #         naction = naction.clone().requires_grad_(True)
+    #
+    #         l_pose = naction[:, :, :9].reshape(B * T, 9)  # (B*T, 9)
+    #         r_pose = naction[:, :, 10:19].reshape(B * T, 9)  # (B*T, 9)
+    #
+    #         T_L_mat = pose_to_SE3(l_pose)
+    #         T_R_mat = pose_to_SE3(r_pose)
+    #         T_L = lie.from_tensor(T_L_mat, lie.SE3)  # 保持梯度历史
+    #         T_R = lie.from_tensor(T_R_mat, lie.SE3)
+    #
+    #         last_L_mat = pose_to_SE3(last_action[:9].unsqueeze(0))
+    #         last_R_mat = pose_to_SE3(last_action[10:19].unsqueeze(0))
+    #
+    #         last_L = lie.from_tensor(last_L_mat, lie.SE3)
+    #         last_R = lie.from_tensor(last_R_mat, lie.SE3)
+    #
+    #         T_rel_desired = last_L.inv() * last_R
+    #         T_rel_desired_expanded = T_rel_desired._t.expand(B * T, -1, -1)
+    #         T_rel_desired_batch = lie.from_tensor(T_rel_desired_expanded, lie.SE3)
+    #
+    #         # T_L = lie.SE3(pose_to_SE3(l_pose), requires_grad=True)  # (B*T,3,4)
+    #         # T_R = lie.SE3(pose_to_SE3(r_pose), requires_grad=True)  # (B*T,3,4)
+    #         #
+    #         # last_L = lie.SE3(pose_to_SE3(last_action[:9].unsqueeze(0)), requires_grad=True)  # (1,9)
+    #         # last_R = lie.SE3(pose_to_SE3(last_action[10:19].unsqueeze(0)), requires_grad=True)
+    #         # T_rel_desired = last_L.inv().compose(last_R)
+    #         # T_rel_desired = lie.SE3(T_rel_desired._t.expand(B * T, 3, 4), requires_grad=True)
+    #         # T_rel_desired = T_rel_desired.expand(B * T) # (B*T, 3, 4)
+    #
+    #         if bimanual_category == 'asym_l_dom':
+    #             T_rel = T_L.inv() * T_R
+    #             delta = T_rel.inv() * T_rel_desired_batch
+    #         elif bimanual_category == 'asym_r_dom':
+    #             T_rel = T_R.inv() * T_L
+    #             delta = T_rel.inv() * T_rel_desired_batch.inv()
+    #         elif bimanual_category == 'sym':
+    #             delta = T_L.inv() * T_R * T_rel_desired_batch.inv()
+    #         else:
+    #             raise ValueError(f"Unknown bimanual category: {bimanual_category}")
+    #
+    #         # Compute twist error on SE(3) manifold
+    #         xi = delta.log()   # (B*T, 6) - 6D twist vector
+    #         loss = (xi ** 2).sum(dim=-1)  # (B*T,)
+    #         loss = loss.view(B, T).mean(dim=1)  # (B,)
+    #
+    #         assert loss.requires_grad, "Loss is not differentiable. Check computational graph."
+    #
+    #         grad = torch.autograd.grad(
+    #             loss,
+    #             naction,
+    #             grad_outputs=torch.ones_like(loss),
+    #             create_graph=False
+    #         )[0]
+    #
+    #     return grad
+
     def coordination_constraints(
             self,
             naction: torch.Tensor,
@@ -1928,42 +2099,73 @@ class DiffusionPolicy:
             grad (Tensor): Gradient of coordination constraint w.r.t naction, shape (B, T, 20)
         """
         B, T, D = naction.shape
+        device = naction.device
+        dtype = naction.dtype
+
         assert D == 20, "Expected 20D pose per frame (10D left + 10D right)"
         if last_action is None:
             raise ValueError("last_action must be provided to compute desired relative pose.")
+        if isinstance(last_action, np.ndarray):
+            last_action = torch.tensor(last_action, dtype=naction.dtype, device=naction.device)
 
         with torch.enable_grad():
-            naction = naction.clone().detach().requires_grad_(True)
+            naction = naction.clone().requires_grad_(True)
+            # Unnormalize naction and convert to absolute action
+            unnormalize_naction = self.bmp_policy.normalizer['action'].unnormalize(naction)
+            abs_traj = get_abs_traj_from_delta(unnormalize_naction, last_action, device=device)
 
-            l_pose = naction[:, :, :9].reshape(B * T, 9)  # (B*T, 9)
-            r_pose = naction[:, :, 10:19].reshape(B * T, 9)  # (B*T, 9)
+            l_pose = abs_traj[:, :, :9].reshape(B * T, 9)  # (B*T, 9)
+            r_pose = abs_traj[:, :, 10:19].reshape(B * T, 9)  # (B*T, 9)
+            T_L = lie.from_tensor(pose_to_SE3(l_pose), lie.SE3)  # left_base → left_ee
+            T_R = lie.from_tensor(pose_to_SE3(r_pose), lie.SE3)  # right_base → right_ee → left_base → right_ee
 
-            T_L = lie.SE3.from_matrix(pose_to_SE3(l_pose))  # (B*T,4,4)
-            T_R = lie.SE3.from_matrix(pose_to_SE3(r_pose))  # (B*T,4,4)
+            # === Convert T_R from right_base frame to left_base frame ===
+            rot = torch.tensor([
+                [-1.0, 0.0, 0.0],
+                [0.0, -1.0, 0.0],
+                [0.0, 0.0, 1.0]
+            ], dtype=dtype, device=device)
+            pos = torch.tensor([0.0, -1.08, 0.0], dtype=dtype, device=device)
+            T_left_to_right = torch.cat([rot, pos.unsqueeze(-1)], dim=-1)  # (3, 4)
+            T_left_to_right = T_left_to_right.unsqueeze(0).expand(B * T, -1, -1)  # (B*T, 3, 4)
+            T_left_to_right = lie.from_tensor(T_left_to_right, lie.SE3)  # left_base → right_base
+            T_transform = T_left_to_right.inv()
 
-            last_L = lie.SE3.from_matrix(pose_to_SE3(last_action[:9].unsqueeze(0)))  # (1,9)
-            last_R = lie.SE3.from_matrix(pose_to_SE3(last_action[10:19].unsqueeze(0)))
-            T_rel_desired = last_L.inv().compose(last_R)
-            T_rel_desired = T_rel_desired.expand(B * T) # (B*T, 4, 4)
+            # T_right_to_left = torch.linalg.inv(T_left_to_right)
+            # T_right_to_left = T_right_to_left.unsqueeze(0).expand(B * T, -1, -1)  # (B*T, 3, 4)
+            # T_transform = lie.from_tensor(T_right_to_left, lie.SE3)  # right_base → left_base
 
+            # Apply right_base → left_base transform
+            T_R = T_transform * T_R  # (B*T, 3, 4)
+
+            # Also convert last_action to left_base frame
+            last_L_mat = pose_to_SE3(last_action[:9].unsqueeze(0))  # (1, 3, 4)
+            last_R_mat = pose_to_SE3(last_action[10:19].unsqueeze(0))  # (1, 3, 4)
+            last_L = lie.from_tensor(last_L_mat, lie.SE3)
+            last_R = lie.from_tensor(last_R_mat, lie.SE3)
+            last_R = T_transform * last_R  # Transform last_R from right_base to left_base frame
+
+            T_rel_desired = last_L.inv() * last_R
+            T_rel_desired_expanded = T_rel_desired._t.expand(B * T, -1, -1)
+            T_rel_desired_batch = lie.from_tensor(T_rel_desired_expanded, lie.SE3)
+
+            # === Coordination loss computation ===
             if bimanual_category == 'asym_l_dom':
-                # Left leads: T_rel = T_L^{-1} * T_R should match T_rel_desired
-                T_rel = T_L.inv().compose(T_R)
-                delta = T_rel.inv().compose(T_rel_desired)
+                T_rel = T_L.inv() * T_R
+                delta = T_rel.inv() * T_rel_desired_batch
             elif bimanual_category == 'asym_r_dom':
-                # Right leads: T_rel = T_R^{-1} * T_L should match T_rel_desired
-                T_rel = T_R.inv().compose(T_L)
-                delta = T_rel.inv().compose(T_rel_desired.inv())
+                T_rel = T_R.inv() * T_L
+                delta = T_rel.inv() * T_rel_desired_batch.inv()
             elif bimanual_category == 'sym':
-                delta = T_L.inv().compose(T_R).compose(T_rel_desired.inv())
+                delta = T_L.inv() * T_R * T_rel_desired_batch.inv()
             else:
                 raise ValueError(f"Unknown bimanual category: {bimanual_category}")
 
-            # Compute twist error on SE(3) manifold
-            xi = delta.log()   # (B*T, 6) - 6D twist vector
-
+            xi = delta.log()  # (B*T, 6) - 6D twist vector
             loss = (xi ** 2).sum(dim=-1)  # (B*T,)
             loss = loss.view(B, T).mean(dim=1)  # (B,)
+
+            assert loss.requires_grad, "Loss is not differentiable. Check computational graph."
 
             grad = torch.autograd.grad(
                 loss,
