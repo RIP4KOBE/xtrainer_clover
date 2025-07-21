@@ -41,8 +41,8 @@ class Args:
     agent_name: str = "dp"
     act_ckpt_path: str = "./ckpt/act/tidying_up_bowls_abcefg_mix_0925"
     # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_6d_delta_normalization_20250619/last.ckpt"
-    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_absolute_6d_normalization_20250619/last.ckpt"
-    dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/multimodal_dp_plate_wiping_eef_absolute_6d_20250626/last.ckpt"
+    dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_absolute_6d_normalization_20250619/last.ckpt"
+    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/multimodal_dp_plate_wiping_eef_absolute_6d_20250626/last.ckpt"
     dp_model = None
     act_model = None
     obj_correction = False

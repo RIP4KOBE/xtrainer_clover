@@ -854,7 +854,7 @@ class DiffusionPolicy:
                          traj_origin=None,
                          use_cem=False, cem_iters=20,
                          num_elites=32,
-                         temperature=0.1, visualize=True, composition_strategy: str = 'guided-sampling',
+                         temperature=0.1, visualize=True, composition_strategy: str = 'stochastic-sampling',
                          bimanual_category: str = 'asym_l_dom'):
         self.ema_nets.eval()
 
@@ -1044,7 +1044,7 @@ class DiffusionPolicy:
             n_trunc_steps=5,
             noise_scale=1.0,
             use_dp_noise=False,
-            use_guidance=False,
+            use_guidance=True,
             last_action=None,
             gamma = 0.5,
     ):
@@ -1858,7 +1858,8 @@ class DiffusionPolicy:
                 # combined_xy_shift = (left_xy_shift ** 2 + right_xy_shift ** 2) ** 0.5  # L2 norm
 
                 # Final reward score
-                scores[i] = combined_drop - combined_xy_shift
+                # scores[i] = combined_drop - combined_xy_shift
+                scores[i] = combined_drop
 
             # Negative because higher scores mean lower reward
             scores = -torch.as_tensor(scores, device=device)
@@ -1869,209 +1870,6 @@ class DiffusionPolicy:
 
         return lower_both_hands_vertical
 
-    # def coordination_constraints(self, naction, last_action=None, bimanual_category='sym'):
-    #     """
-    #     Compute the bimanual coordination constraint gradient for the predicted diffusion action.
-    #     :param naction: Tensor of shape (batch, 16, 20), bimanual action predicted from diffusion p[olicy.
-    #                        Each action consists of 16 timesteps, and each timestep has 20 eef pose with 6d rotation
-    #                        (10 for the left arm, 10 for the right arm).
-    #            last_action: Tensor of shape (20,), the last executed action, desired relative pose can be computed from it.
-    #            bimanual_category: str, the bimanual category of the action, e.g., 'sym', 'asym_l_dom', 'asym_r_dom',
-    #            to determine which types of constraints should be used.
-    #     :return: bimanual coordination constraint gradient for naction.
-    #     """
-    #     B, T, D = naction.shape
-    #     assert D == 20  # left(10D) + right(10D)
-    #
-    #     # Compute desired relative pose from last action
-    #     if last_action is None:
-    #         raise ValueError("last_action must be provided to compute desired relative pose⋆")
-    #
-    #     with torch.enable_grad():
-    #         naction = naction.clone().detach().requires_grad_(True)
-    #
-    #         # Split actions into left and right arms
-    #         l_pose = pose_to_SE3(naction[:, :, :9])  # (batch, pred_horizon, 4, 4)
-    #         r_pose = pose_to_SE3(naction[:, :, 10:19])  # (batch, pred_horizon, 4, 4)
-    #         xi_L = SE3.from_matrix(l_pose)
-    #         xi_R = SE3.from_matrix(r_pose)
-    #
-    #         last_L = last_action[:9].unsqueeze(0).unsqueeze(0).expand(B, -1, -1)
-    #         last_R = last_action[10:19].unsqueeze(0).unsqueeze(0).expand(B, -1, -1)
-    #         xi_rel_desired = SE3.from_matrix(torch.linalg.inv(last_L) @ last_R)
-    #
-    #         if bimanual_category == 'asym_l_dom':
-    #             # ξ_rel = ξ_L⁻¹ ⋅ ξ_R
-    #             xi_rel = xi_L.inv().dot(xi_R)
-    #             delta = xi_rel.inv().dot(xi_rel_desired)
-    #         elif bimanual_category == 'asym_r_dom':
-    #             # ξ_rel = ξ_R⁻¹ ⋅ ξ_L
-    #             xi_rel = xi_R.inv().dot(xi_L)
-    #             delta = xi_rel.inv().dot(xi_rel_desired.inv())
-    #         elif bimanual_category == 'sym':
-    #             # ξ_L⁻¹ ⋅ ξ_R ≈ ξ_rel_star
-    #             delta = xi_L.inv().dot(xi_R).dot(xi_rel_desired.inv())
-    #         else:
-    #             raise ValueError(f"Unknown bimanual category: {bimanual_category}")
-    #
-    #         delta = delta.log()  # (B, T, 6)
-    #         loss = (delta ** 2).sum(dim=2)  # L2 norm squared → (B, T)
-    #         loss = loss.mean(dim=1)  # (B,)
-    #
-    #         # Compute gradient
-    #         grad = torch.autograd.grad(loss, naction, grad_outputs=torch.ones_like(loss), create_graph=False)[0]
-    #
-    #     return grad
-
-    # def coordination_constraints(
-    #         self,
-    #         naction: torch.Tensor,
-    #         last_action: torch.Tensor,
-    #         bimanual_category: str = 'sym'
-    # ) -> torch.Tensor:
-    #     """
-    #     Compute the bimanual coordination constraint gradient for predicted action.
-    #
-    #     Args:
-    #         naction (Tensor): (B, T, 20) predicted bimanual action.
-    #         last_action (Tensor): (20,) single previous bimanual action (left + right 10D).
-    #         bimanual_category (str): 'sym', 'asym_l_dom', or 'asym_r_dom'.
-    #
-    #     Returns:
-    #         grad (Tensor): Gradient of coordination constraint w.r.t naction, shape (B, T, 20)
-    #     """
-    #     B, T, D = naction.shape
-    #     assert D == 20, "Expected 20D pose per frame (10D left + 10D right)"
-    #
-    #     if last_action is None:
-    #         raise ValueError("last_action must be provided to compute desired relative pose.")
-    #
-    #     with torch.enable_grad():
-    #         naction = naction.clone().detach().requires_grad_(True)
-    #
-    #         # Extract left and right pose (first 9D assumed to be SE(3) 10D rep w/o gripper)
-    #         l_pose = naction[:, :, :9]
-    #         r_pose = naction[:, :, 10:19]
-    #
-    #         # Convert to SE(3) matrices (shape: B, T, 4, 4)
-    #         T_L = SE3.from_pose_vector(l_pose)  # Custom: wrap pose_to_SE3 inside
-    #         T_R = SE3.from_pose_vector(r_pose)
-    #
-    #         # Compute desired relative pose from last action (shape: 4x4 matrices)
-    #         last_T_L = SE3.from_pose_vector(last_action[:9].unsqueeze(0))  # shape: (1, 4, 4)
-    #         last_T_R = SE3.from_pose_vector(last_action[10:19].unsqueeze(0))
-    #
-    #         T_rel_desired = last_T_L.inv().dot(last_T_R)  # shape: (1, 4, 4) → broadcastable
-    #
-    #         if bimanual_category == 'asym_l_dom':
-    #             T_rel = T_L.inv().dot(T_R)
-    #             delta = T_rel.inv().dot(T_rel_desired)
-    #         elif bimanual_category == 'asym_r_dom':
-    #             T_rel = T_R.inv().dot(T_L)
-    #             delta = T_rel.inv().dot(T_rel_desired.inv())
-    #         elif bimanual_category == 'sym':
-    #             delta = T_L.inv().dot(T_R).dot(T_rel_desired.inv())
-    #         else:
-    #             raise ValueError(f"Unknown bimanual category: {bimanual_category}")
-    #
-    #         # Compute twist error (log map), shape: (B, T, 6)
-    #         xi = delta.log()
-    #
-    #         # Compute L2 norm squared
-    #         loss = (xi ** 2).sum(dim=-1)  # (B, T)
-    #         loss = loss.mean(dim=1)  # (B,)
-    #
-    #         # Backprop gradient
-    #         grad = torch.autograd.grad(
-    #             loss,
-    #             naction,
-    #             grad_outputs=torch.ones_like(loss),
-    #             create_graph=False
-    #         )[0]
-    #
-    #     return grad
-
-
-    # def coordination_constraints(
-    #         self,
-    #         naction: torch.Tensor,
-    #         last_action: torch.Tensor,
-    #         bimanual_category: str = 'sym'
-    # ) -> torch.Tensor:
-    #     """
-    #     Compute the bimanual coordination constraint gradient using torchlie.
-    #
-    #     Args:
-    #         naction (Tensor): (B, T, 20) predicted bimanual action.
-    #         last_action (Tensor): (20,) previous bimanual action (left + right 10D).
-    #         bimanual_category (str): 'sym', 'asym_l_dom', or 'asym_r_dom'.
-    #
-    #     Returns:
-    #         grad (Tensor): Gradient of coordination constraint w.r.t naction, shape (B, T, 20)
-    #     """
-    #     B, T, D = naction.shape
-    #     assert D == 20, "Expected 20D pose per frame (10D left + 10D right)"
-    #     if last_action is None:
-    #         raise ValueError("last_action must be provided to compute desired relative pose.")
-    #     if isinstance(last_action, np.ndarray):
-    #         last_action = torch.tensor(last_action, dtype=naction.dtype, device=naction.device)
-    #
-    #     with torch.enable_grad():
-    #         naction = naction.clone().requires_grad_(True)
-    #
-    #         l_pose = naction[:, :, :9].reshape(B * T, 9)  # (B*T, 9)
-    #         r_pose = naction[:, :, 10:19].reshape(B * T, 9)  # (B*T, 9)
-    #
-    #         T_L_mat = pose_to_SE3(l_pose)
-    #         T_R_mat = pose_to_SE3(r_pose)
-    #         T_L = lie.from_tensor(T_L_mat, lie.SE3)  # 保持梯度历史
-    #         T_R = lie.from_tensor(T_R_mat, lie.SE3)
-    #
-    #         last_L_mat = pose_to_SE3(last_action[:9].unsqueeze(0))
-    #         last_R_mat = pose_to_SE3(last_action[10:19].unsqueeze(0))
-    #
-    #         last_L = lie.from_tensor(last_L_mat, lie.SE3)
-    #         last_R = lie.from_tensor(last_R_mat, lie.SE3)
-    #
-    #         T_rel_desired = last_L.inv() * last_R
-    #         T_rel_desired_expanded = T_rel_desired._t.expand(B * T, -1, -1)
-    #         T_rel_desired_batch = lie.from_tensor(T_rel_desired_expanded, lie.SE3)
-    #
-    #         # T_L = lie.SE3(pose_to_SE3(l_pose), requires_grad=True)  # (B*T,3,4)
-    #         # T_R = lie.SE3(pose_to_SE3(r_pose), requires_grad=True)  # (B*T,3,4)
-    #         #
-    #         # last_L = lie.SE3(pose_to_SE3(last_action[:9].unsqueeze(0)), requires_grad=True)  # (1,9)
-    #         # last_R = lie.SE3(pose_to_SE3(last_action[10:19].unsqueeze(0)), requires_grad=True)
-    #         # T_rel_desired = last_L.inv().compose(last_R)
-    #         # T_rel_desired = lie.SE3(T_rel_desired._t.expand(B * T, 3, 4), requires_grad=True)
-    #         # T_rel_desired = T_rel_desired.expand(B * T) # (B*T, 3, 4)
-    #
-    #         if bimanual_category == 'asym_l_dom':
-    #             T_rel = T_L.inv() * T_R
-    #             delta = T_rel.inv() * T_rel_desired_batch
-    #         elif bimanual_category == 'asym_r_dom':
-    #             T_rel = T_R.inv() * T_L
-    #             delta = T_rel.inv() * T_rel_desired_batch.inv()
-    #         elif bimanual_category == 'sym':
-    #             delta = T_L.inv() * T_R * T_rel_desired_batch.inv()
-    #         else:
-    #             raise ValueError(f"Unknown bimanual category: {bimanual_category}")
-    #
-    #         # Compute twist error on SE(3) manifold
-    #         xi = delta.log()   # (B*T, 6) - 6D twist vector
-    #         loss = (xi ** 2).sum(dim=-1)  # (B*T,)
-    #         loss = loss.view(B, T).mean(dim=1)  # (B,)
-    #
-    #         assert loss.requires_grad, "Loss is not differentiable. Check computational graph."
-    #
-    #         grad = torch.autograd.grad(
-    #             loss,
-    #             naction,
-    #             grad_outputs=torch.ones_like(loss),
-    #             create_graph=False
-    #         )[0]
-    #
-    #     return grad
 
     def coordination_constraints(
             self,
@@ -2080,7 +1878,7 @@ class DiffusionPolicy:
             bmp_noise_pred: torch.Tensor,
             timesteps: int,
             bimanual_category: str = 'sym',
-            use_clean_sample: bool = False
+            use_clean_sample: bool = True
     ) -> torch.Tensor:
         """
         Compute the bimanual coordination constraint gradient using torchlie.
