@@ -865,7 +865,11 @@ class DiffusionPolicy:
             reward = self.generate_reward(stats["action"])
 
         if constraints is None:
-            constraints =  self.coordination_constraints
+            # constraints =  self.coordination_constraints
+            constraints =  self.left_reach_constraint
+
+
+
 
         with torch.no_grad():
             features = []
@@ -1912,7 +1916,9 @@ class DiffusionPolicy:
             else:
                 # Unnormalize naction directly
                 unnormalize_naction = self.bmp_policy.normalizer['action'].unnormalize(naction)
-
+            #
+            # # Unnormalize naction and convert to absolute action
+            # unnormalize_naction = self.bmp_policy.normalizer['action'].unnormalize(naction)
             abs_traj = get_abs_traj_from_delta(unnormalize_naction, last_action, device=device)
 
             l_pose = abs_traj[:, :, :9].reshape(B * T, 9)  # (B*T, 9)
@@ -1976,6 +1982,70 @@ class DiffusionPolicy:
             )[0]
 
         return grad
+
+
+    def left_reach_constraint(
+            self,
+            naction: torch.Tensor,
+            last_action: torch.Tensor,
+            bmp_noise_pred: torch.Tensor,
+            timesteps: int,
+            target_position: torch.Tensor = torch.tensor([0.012025, -0.491919, 0.13673]),
+            bimanual_category: str = 'sym',
+            use_clean_sample: bool = False,
+    ) -> torch.Tensor:
+        """
+        Computes the gradient of the average L2-distance between the left arm trajectory and the target position.
+
+        Args:
+            naction (Tensor): (B, T, 20) predicted bimanual action.
+            last_action (Tensor): (20,) previous bimanual action (left + right 10D).
+            bimanual_category (str): 'sym', 'asym_l_dom', or 'asym_r_dom'.
+
+        Returns:
+            grad (Tensor): Gradient of coordination constraint w.r.t naction, shape (B, T, 20)
+        """
+        B, T, D = naction.shape
+        device = naction.device
+        dtype = naction.dtype
+
+        assert D == 20, "Expected 20D pose per frame (10D left + 10D right)"
+        if last_action is None:
+            raise ValueError("last_action must be provided to compute desired relative pose.")
+        if isinstance(last_action, np.ndarray):
+            last_action = torch.tensor(last_action, dtype=naction.dtype, device=naction.device)
+
+        with torch.enable_grad():
+            naction = naction.clone().requires_grad_(True)
+
+            if use_clean_sample:
+                alpha_prod_t = self.noise_scheduler.alphas_cumprod[timesteps]
+                beta_prod_t = 1 - alpha_prod_t
+                clean_sample = (naction - beta_prod_t ** (0.5) * bmp_noise_pred) / alpha_prod_t ** (0.5)
+                unnormalize_naction = self.bmp_policy.normalizer['action'].unnormalize(clean_sample)
+            else:
+                # Unnormalize naction directly
+                unnormalize_naction = self.bmp_policy.normalizer['action'].unnormalize(naction)
+
+            abs_traj = get_abs_traj_from_delta(unnormalize_naction, last_action, device=device)
+
+            l_pos = abs_traj[:, :, :3]
+            r_pos = abs_traj[:, :, 10:13]
+            target = target_position.view(1, 1, 3).repeat(B, T, 1)  # (B, T, 3)
+
+            dist = (l_pos - target).norm(p=2, dim=-1)  # (B, T)
+            loss = dist.mean(dim=1) # (B,)
+
+            assert loss.requires_grad, "Loss is not differentiable. Check computational graph."
+
+            grad = torch.autograd.grad(
+                loss,
+                naction,
+                grad_outputs=torch.ones_like(loss),
+                create_graph=False
+            )[0]
+
+            return grad
 
 class BaseLowdimPolicy(ModuleAttrMixin):
     # ========= inference  ============
