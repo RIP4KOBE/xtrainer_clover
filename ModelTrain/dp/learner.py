@@ -866,10 +866,9 @@ class DiffusionPolicy:
 
         if constraints is None:
             # constraints =  self.coordination_constraints
-            constraints =  self.left_reach_constraint
-
-
-
+            # constraints =  self.left_reach_constraint
+            # constraints =  self.bimanual_reach_constraint
+            constraints =  self.position_coordination_constraints
 
         with torch.no_grad():
             features = []
@@ -1106,14 +1105,14 @@ class DiffusionPolicy:
                         # apply constraints
                             grad = constraints(naction, last_action, bmp_noise_pred, k, bimanual_category)
                             if composition_strategy == 'guided-sampling':
-                                guide_ratio = 20
+                                guide_ratio = 150
                             elif composition_strategy == 'stochastic-sampling':
-                                guide_ratio = 60
+                                guide_ratio = 200
                             else:
                                 guide_ratio = 0
-                            # modulated_noise = modulated_noise + guide_ratio * grad # apply gradient guidance
-                            modulated_noise = (modulated_noise - (1 - self.noise_scheduler.alphas_cumprod[k]).sqrt() *
-                                               grad * guide_ratio) # classifier guidance-DDIM version
+                            modulated_noise = modulated_noise + guide_ratio * grad # apply gradient guidance
+                            # modulated_noise = (modulated_noise - (1 - self.noise_scheduler.alphas_cumprod[k]).sqrt() *
+                            #                    grad * guide_ratio) # classifier guidance-DDIM version
 
                 if deterministic:
                     eta = 0.0
@@ -1566,8 +1565,8 @@ class DiffusionPolicy:
                 final_height = left_ee_position[i, -1, 2]  # Last timestep
 
                 # Compute reward as the height increase from the first to the last timestep
-                scores[i] = final_height - initial_height
-                # scores[i] = initial_height - final_height
+                # scores[i] = final_height - initial_height
+                scores[i] = initial_height - final_height
             scores = -torch.as_tensor(scores, device=device)
             return scores, {}
 
@@ -1841,6 +1840,9 @@ class DiffusionPolicy:
                 left_drop = left_start[2] - left_end[2]
                 right_drop = right_start[2] - right_end[2]
 
+                # left_drop = left_end[2] - left_start[2]
+                # right_drop = right_end[2] - right_start[2]
+
                 # xy displacement penalty (Euclidean distance)
                 left_xy_shift = np.linalg.norm(left_start[:2] - left_end[:2])
                 right_xy_shift = np.linalg.norm(right_start[:2] - right_end[:2])
@@ -1983,6 +1985,98 @@ class DiffusionPolicy:
 
         return grad
 
+    def position_coordination_constraints(
+            self,
+            naction: torch.Tensor,
+            last_action: torch.Tensor,
+            bmp_noise_pred: torch.Tensor,
+            timesteps: int,
+            bimanual_category: str = 'sym',
+            use_clean_sample: bool = True
+    ) -> torch.Tensor:
+        """
+        Compute simplified bimanual coordination constraint gradient:
+        only uses relative position between left and right arm end-effectors.
+
+        Args:
+            naction (Tensor): (B, T, 20) predicted bimanual action.
+            last_action (Tensor): (20,) previous bimanual action (absolute).
+            bmp_noise_pred (Tensor): predicted noise for clean sample reconstruction.
+            timesteps (int): current diffusion timestep.
+            bimanual_category (str): 'sym', 'asym_l_dom', or 'asym_r_dom'.
+            use_clean_sample (bool): whether to use denoised action.
+
+        Returns:
+            grad (Tensor): gradient of coordination loss w.r.t naction, shape (B, T, 20)
+        """
+        B, T, D = naction.shape
+        assert D == 20, "Expected action of shape (B, T, 20) = (left+right)"
+        dtype, device = naction.dtype, naction.device
+
+        if last_action is None:
+            raise ValueError("last_action must be provided")
+        if isinstance(last_action, np.ndarray):
+            last_action = torch.tensor(last_action, dtype=dtype, device=device)
+
+        with torch.enable_grad():
+            naction = naction.clone().requires_grad_(True)
+
+            # === Denoise or directly use predicted action ===
+            if use_clean_sample:
+                alpha_prod_t = self.noise_scheduler.alphas_cumprod[timesteps]
+                beta_prod_t = 1 - alpha_prod_t
+                clean_sample = (naction - beta_prod_t.sqrt() * bmp_noise_pred) / alpha_prod_t.sqrt()
+                unnormalized_naction = self.bmp_policy.normalizer['action'].unnormalize(clean_sample)
+            else:
+                unnormalized_naction = self.bmp_policy.normalizer['action'].unnormalize(naction)
+
+            # === Convert delta action to absolute trajectory ===
+            abs_traj = get_abs_traj_from_delta(unnormalized_naction, last_action, device=device)
+
+            # Extract 3D positions of end-effectors
+            l_pos = abs_traj[:, :, :3]  # (B, T, 3)
+            r_pos = abs_traj[:, :, 10:13]  # (B, T, 3)
+
+            # === Relative position constraint ===
+            # Use initial relative position as desired offset
+            l0 = last_action[:3].view(1, 1, 3).expand(B, T, 3) # (B, T, 3)
+            r0 = last_action[10:13].view(1, 1, 3).expand(B, T, 3) # (B, T, 3)
+
+            # Transformation from left base to right base
+            rot = torch.tensor([
+                [-1.0, 0.0, 0.0],
+                [0.0, -1.0, 0.0],
+                [0.0, 0.0, 1.0]
+            ], dtype=dtype, device=device)
+            pos = torch.tensor([0.0, -1.08, 0.0], dtype=dtype, device=device)
+            T_left_to_right = torch.cat([rot, pos.unsqueeze(-1)], dim=-1)  # (3, 4)
+            T_left_to_right = T_left_to_right.unsqueeze(0).expand(B * T, -1, -1)  # (B*T, 3, 4)
+            T_left_to_right = lie.from_tensor(T_left_to_right, lie.SE3)  # left_base → right_base
+
+            # Transform r_pos to left_base frame
+            T_right_to_left = T_left_to_right.inv()
+            r_pos = T_right_to_left @ r_pos.view(B * T, 3)
+            r_pos = r_pos.view(B, T, 3)
+            r0 = T_right_to_left @ r0.view(B * T, 3)
+            r0 = r0.view(B, T, 3)  # (B, T, 3)
+
+            delta0 = r0 - l0
+            delta_pos = r_pos - l_pos
+            delta_err = delta_pos - delta0 # (B, T, 3)
+            loss = delta_err.norm(p=2, dim=-1)   # (B, T)
+            loss = loss.mean(dim=1)  # (B,)
+
+            assert loss.requires_grad, "Loss is not differentiable."
+
+            grad = torch.autograd.grad(
+                loss,
+                naction,
+                grad_outputs=torch.ones_like(loss),
+                create_graph=False
+            )[0]  # (B, T, 20)
+
+        return grad
+
 
     def left_reach_constraint(
             self,
@@ -1990,9 +2084,9 @@ class DiffusionPolicy:
             last_action: torch.Tensor,
             bmp_noise_pred: torch.Tensor,
             timesteps: int,
-            target_position: torch.Tensor = torch.tensor([0.012025, -0.491919, 0.13673]),
+            target_position: torch.Tensor,
             bimanual_category: str = 'sym',
-            use_clean_sample: bool = False,
+            use_clean_sample: bool = True,
     ) -> torch.Tensor:
         """
         Computes the gradient of the average L2-distance between the left arm trajectory and the target position.
@@ -2008,6 +2102,8 @@ class DiffusionPolicy:
         B, T, D = naction.shape
         device = naction.device
         dtype = naction.dtype
+        pos = [0.012025, -0.491919, 0.13673]
+        target_position = torch.tensor(pos, dtype=dtype, device=device).view(1, 1, 3).repeat(B, T, 1)  # (B, T, 3)
 
         assert D == 20, "Expected 20D pose per frame (10D left + 10D right)"
         if last_action is None:
@@ -2031,10 +2127,96 @@ class DiffusionPolicy:
 
             l_pos = abs_traj[:, :, :3]
             r_pos = abs_traj[:, :, 10:13]
-            target = target_position.view(1, 1, 3).repeat(B, T, 1)  # (B, T, 3)
 
-            dist = (l_pos - target).norm(p=2, dim=-1)  # (B, T)
+            dist = (l_pos - target_position).norm(p=2, dim=-1)  # (B, T)
             loss = dist.mean(dim=1) # (B,)
+
+            assert loss.requires_grad, "Loss is not differentiable. Check computational graph."
+
+            grad = torch.autograd.grad(
+                loss,
+                naction,
+                grad_outputs=torch.ones_like(loss),
+                create_graph=False
+            )[0]
+
+            return grad
+
+    def bimanual_reach_constraint(
+            self,
+            naction: torch.Tensor,
+            last_action: torch.Tensor,
+            bmp_noise_pred: torch.Tensor,
+            timesteps: int,
+            l_target_position: torch.Tensor,
+            bimanual_category: str = 'sym',
+            use_clean_sample: bool = True,
+    ) -> torch.Tensor:
+        """
+        Computes the gradient of the average L2-distance between the dual arm trajectory and the target position.
+
+        Args:
+            naction (Tensor): (B, T, 20) predicted bimanual action.
+            last_action (Tensor): (20,) previous bimanual action (left + right 10D).
+            bimanual_category (str): 'sym', 'asym_l_dom', or 'asym_r_dom'.
+
+        Returns:
+            grad (Tensor): Gradient of coordination constraint w.r.t naction, shape (B, T, 20)
+        """
+        B, T, D = naction.shape
+        device = naction.device
+        dtype = naction.dtype
+        pos = [0.012025, -0.491919, 0.13673]
+        l_target_position = torch.tensor(pos, dtype=dtype, device=device).view(1, 1, 3).repeat(B, T, 1)  # (B, T, 3)
+
+        assert D == 20, "Expected 20D pose per frame (10D left + 10D right)"
+        if last_action is None:
+            raise ValueError("last_action must be provided to compute desired relative pose.")
+        if isinstance(last_action, np.ndarray):
+            last_action = torch.tensor(last_action, dtype=naction.dtype, device=naction.device)
+
+        with torch.enable_grad():
+            naction = naction.clone().requires_grad_(True)
+
+            if use_clean_sample:
+                alpha_prod_t = self.noise_scheduler.alphas_cumprod[timesteps]
+                beta_prod_t = 1 - alpha_prod_t
+                clean_sample = (naction - beta_prod_t ** (0.5) * bmp_noise_pred) / alpha_prod_t ** (0.5)
+                unnormalize_naction = self.bmp_policy.normalizer['action'].unnormalize(clean_sample)
+            else:
+                # Unnormalize naction directly
+                unnormalize_naction = self.bmp_policy.normalizer['action'].unnormalize(naction)
+
+            abs_traj = get_abs_traj_from_delta(unnormalize_naction, last_action, device=device)
+
+            l_pos = abs_traj[:, :, :3]
+            r_pos = abs_traj[:, :, 10:13]
+
+            #Transformation from left base to right base
+            rot = torch.tensor([
+                [-1.0, 0.0, 0.0],
+                [0.0, -1.0, 0.0],
+                [0.0, 0.0, 1.0]
+            ], dtype=dtype, device=device)
+            pos = torch.tensor([0.0, -1.08, 0.0], dtype=dtype, device=device)
+            T_left_to_right = torch.cat([rot, pos.unsqueeze(-1)], dim=-1)  # (3, 4)
+            T_left_to_right = T_left_to_right.unsqueeze(0).expand(B * T, -1, -1)  # (B*T, 3, 4)
+            T_left_to_right = lie.from_tensor(T_left_to_right, lie.SE3)  # left_base → right_base
+
+            # transform target_position to right_base frame
+            l_target_flat = l_target_position.contiguous().view(B * T, 3)
+            r_target_flat = T_left_to_right @ l_target_flat  # shape: (B*T, 3)
+            r_target_position = r_target_flat.view(B, T, 3)
+
+            delta_l = l_pos - l_target_position  # (B, T, 3)
+            delta_r = r_pos - r_target_position  # (B, T, 3)
+
+            dist_l = delta_l.norm(p=2, dim=-1)  # (B, T)
+            dist_r = delta_r.norm(p=2, dim=-1)  # (B, T)
+
+            loss_l = dist_l.mean(dim=1)  # (B,)
+            loss_r = dist_r.mean(dim=1)  # (B,)
+            loss = loss_l + loss_r  # (B,)
 
             assert loss.requires_grad, "Loss is not differentiable. Check computational graph."
 

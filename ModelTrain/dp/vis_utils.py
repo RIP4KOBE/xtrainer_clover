@@ -87,6 +87,13 @@ def visualize_trajectory(left_ee_positions, right_ee_positions, best_trajectory)
                 best_left_ee_positions[0, 2],  # Start Z
                 color='green', marker='o', s=100, label="Start Point")  # Green Start
 
+    # Mark left target position
+    l_target_position = [0.012025, -0.491919, 0.13673]
+    ax1.scatter(l_target_position[0],  # Start X
+                l_target_position[1],  # Start Y
+                l_target_position[2],  # Start Z
+                color='purple', marker='^', s=100, label="Target Point")  # purple target
+
     ax1.scatter(best_left_ee_positions[ -1, 0],  # End X
                 best_left_ee_positions[-1, 1],  # End Y
                 best_left_ee_positions[-1, 2],  # End Z
@@ -132,6 +139,22 @@ def visualize_trajectory(left_ee_positions, right_ee_positions, best_trajectory)
                 best_right_ee_positions[-1, 1],  # End Y
                 best_right_ee_positions[-1, 2],  # End Z
                 color='red', marker='X', s=150, label="End Point")  # Red End
+
+    # Mark right target position
+    T_left_to_right = np.eye(4)
+    T_left_to_right[:3, 3] = np.array([0.0, -1.08, 0.0])
+    T_left_to_right[:3, :3] = np.array([
+        [-1.0, 0.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [0.0, 0.0, 1.0]
+    ])
+    # Transform left target position to right arm frame
+    r_target_position = T_left_to_right @ np.append(l_target_position, 1.0)
+    ax2.scatter(r_target_position[0],  # End X
+                r_target_position[1],  # End Y
+                r_target_position[2],  # End Z
+                color='purple', marker='^', s=100, label="Target Point")  # Red End
+
 
     ax2.view_init(elev=10, azim=0)
     ax2.set_title("Right Arm End-Effector Trajectories")
