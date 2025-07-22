@@ -1007,7 +1007,7 @@ class DiffusionPolicy:
 
         # schedule the executed trajectory
         best_trajectory = bimanual_coordinator(
-            mode="bimanual",
+            mode="right_eef_pos",
             traj_origin=traj_origin,
             best_trajectory=best_trajectory
         )
@@ -1046,10 +1046,10 @@ class DiffusionPolicy:
             deterministic=True,
             n_trunc_steps=5,
             noise_scale=1.0,
-            use_dp_noise=False,
-            use_guidance=True,
+            use_dp_noise=True,
+            use_guidance=False,
             last_action=None,
-            gamma = 0.5,
+            gamma = 0.4,
     ):
         # Validate strategy types
         assert composition_strategy in ['stochastic-sampling', 'guided-sampling'], \
@@ -1092,14 +1092,15 @@ class DiffusionPolicy:
                         dp_noise_pred = self.ema_nets["noise_pred_net"](
                             sample=naction, timestep=k, global_cond=obs_cond
                         )
-                        if isinstance(last_action, np.ndarray):
-                            last_action = torch.from_numpy(last_action).to(self.device)
+                        # if isinstance(last_action, np.ndarray):
+                        #     last_action = torch.from_numpy(last_action).to(self.device)
 
                         # map the noise prediction from absolute to delta via jacobian transformation
-                        dp_noise_pred = noise_jocabian_transform(dp_noise_pred, last_action)
+                        # dp_noise_pred = noise_jocabian_transform(dp_noise_pred, last_action)
 
                         # dp_noise_pred = dp_noise_pred - last_action
-                        modulated_noise = (1 + gamma) * dp_noise_pred - gamma * modulated_noise
+                        # modulated_noise = (1 + gamma) * dp_noise_pred - gamma * modulated_noise
+                        modulated_noise = modulated_noise + gamma * dp_noise_pred
 
                     if constraints is not None and use_guidance:
                         # apply constraints
@@ -1161,23 +1162,25 @@ class DiffusionPolicy:
             data = json.load(f)
         keypoints_list = data['init_keypoint_positions']
         keypoints = np.array(keypoints_list)
-    #     T_left_to_right = np.eye(4)
-    #     T_left_to_right[:3, 3] = np.array([0.0, -1.08, 0.0])
-    #     T_left_to_right[:3, :3] = np.array([
-    #     [-1.0,  0.0,  0.0],
-    #     [ 0.0, -1.0,  0.0],
-    #     [ 0.0,  0.0,  1.0]
-    # ])
-    #     # Transform each keypoint individually
-    #     transformed_keypoints = []
-    #     for kp in keypoints:
-    #         kp_hom = np.append(kp, 1.0)  # Convert to homogeneous coordinate [x, y, z, 1]
-    #         kp_transformed_hom = T_left_to_right @ kp_hom  # Apply transformation
-    #         transformed_keypoints.append(kp_transformed_hom[:3])  # Drop the homogeneous part
-    #
-    #     # Convert to NumPy array
-    #     keypoints = np.array(transformed_keypoints)  # shape: (N, 3)
-        # print("keypoints for NBCFs", keypoints)# Shape: (5, 3)
+
+        # compute the transformation matrix from left to right
+        T_left_to_right = np.eye(4)
+        T_left_to_right[:3, 3] = np.array([0.0, -1.08, 0.0])
+        T_left_to_right[:3, :3] = np.array([
+        [-1.0,  0.0,  0.0],
+        [ 0.0, -1.0,  0.0],
+        [ 0.0,  0.0,  1.0]
+    ])
+        # Transform each keypoint individually
+        transformed_keypoints = []
+        for kp in keypoints:
+            kp_hom = np.append(kp, 1.0)  # Convert to homogeneous coordinate [x, y, z, 1]
+            kp_transformed_hom = T_left_to_right @ kp_hom  # Apply transformation
+            transformed_keypoints.append(kp_transformed_hom[:3])  # Drop the homogeneous part
+
+        # Convert to NumPy array
+        keypoints = np.array(transformed_keypoints)  # shape: (N, 3)
+        print("keypoints for NBCFs", keypoints)# Shape: (5, 3)
 
         # <editor-fold desc="utils">
         def unnormalize_traj(trajectory):
@@ -1527,7 +1530,7 @@ class DiffusionPolicy:
 
             # Extract predicted left arm ee positions
             right_ee_position = right_trajectory[:, :, :3]
-            bottle_position = keypoints[5]
+            bottle_position = keypoints[1]
             safe_distance = 0.15  # Minimum distance to the bottle
             scores = np.zeros(self.sampling_batch_size)
 
@@ -1874,7 +1877,7 @@ class DiffusionPolicy:
         # </editor-fold>
 
 
-        return lower_both_hands_vertical
+        return avoid_right_collision
 
 
     def coordination_constraints(

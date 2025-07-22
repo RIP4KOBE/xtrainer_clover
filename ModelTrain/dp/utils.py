@@ -207,15 +207,44 @@ def quaternion_from_6d_rotation(rot6d: Union[torch.tensor, np.ndarray]) -> torch
     return q
 
 # === Approximate Jacobian matrix for transforming pose noise (single sample)
+# def compute_approx_jacobian(R_ref: torch.Tensor) -> torch.Tensor:
+#     """
+#     R_ref: [3, 3] - reference rotation matrix
+#     return: [9, 9] - approximate Jacobian matrix for pose transformation
+#     """
+#     J = torch.zeros(9, 9, device=R_ref.device)
+#     R_T = R_ref.T
+#     J[0:3, 0:3] = R_T  # Translation part
+#
+#     kron_result = torch.kron(torch.eye(2, device=R_ref.device), R_T)
+#     kron_result = kron_result.reshape(6, 6)
+#
+#     J[3:9, 3:9] = kron_result
+#     return J
+
+
 def compute_approx_jacobian(R_ref: torch.Tensor) -> torch.Tensor:
     """
     R_ref: [3, 3] - reference rotation matrix
     return: [9, 9] - approximate Jacobian matrix for pose transformation
     """
+    # 确保R_ref是连续的
+    R_ref = R_ref.contiguous()
     J = torch.zeros(9, 9, device=R_ref.device)
     R_T = R_ref.T
-    J[0:3, 0:3] = R_T                            # Translation part
-    J[3:9, 3:9] = torch.kron(torch.eye(2, device=R_ref.device), R_T)  # Rotation part (6D)
+
+    # 直接赋值平移部分
+    J[0:3, 0:3] = R_T
+
+    # 手动构建旋转部分的Kronecker乘积
+    eye2 = torch.eye(2, device=R_ref.device)
+    for i in range(2):
+        for j in range(2):
+            if eye2[i, j] > 0:  # 对于单位矩阵，只有对角线元素为1
+                start_row = 3 + i * 3
+                start_col = 3 + j * 3
+                J[start_row:start_row + 3, start_col:start_col + 3] = R_T
+
     return J
 
 # === Main function: transform dual-arm action noise from world frame to reference frame
