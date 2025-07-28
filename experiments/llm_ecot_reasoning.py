@@ -6,10 +6,6 @@ import glob
 import json
 import os
 import re
-import numpy as np
-import base64
-from PIL import Image
-import io
 
 
 class ECOTAdapter(ChatAdapter):
