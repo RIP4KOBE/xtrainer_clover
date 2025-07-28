@@ -1544,7 +1544,7 @@ class DiffusionPolicy:
 
         # </editor-fold>
 
-        # <editor-fold desc="bimanual motion priot NBCFs with 6D rotation">
+        # <editor-fold desc="bimanual motion prior NBCFs with 6D rotation">
         def left_arm_height_upward(trajectory, last_action):
             """
             Compute the reward for "raising the left arm slightly" based on joint angles.
@@ -1631,7 +1631,7 @@ class DiffusionPolicy:
 
             for i in range(self.sampling_batch_size):
 
-                # Getfinal gripper state
+                # Get final gripper state
                 final_gripper_state = left_gripper_state[i, -1]  # (pred_horizon,)
 
                 # Reward is negative distance to target yaw

@@ -296,7 +296,7 @@ class KeypointProposer:
         # save keypoints as metadata
         candidate_keypoints = candidate_keypoints.tolist()
         metadata = {
-            'init_keypoint_positions': candidate_keypoints,  # Ensure numpy arrays are converted
+            'keypoint_positions': candidate_keypoints,  # Ensure numpy arrays are converted
             'num_keypoints': len(candidate_keypoints)
         }
 
@@ -306,119 +306,6 @@ class KeypointProposer:
         return candidate_keypoints
 
 if __name__ == "__main__":
-    # # camera init
-    # device_ids = get_device_ids()
-    # print(f"Found {len(device_ids)} devices: ", device_ids)
-    # camera_dict = load_ini_data_camera()
-    # rs_list = [RealSenseCamera(flip=False, device_id=camera_dict["top"])]
-    #
-    # # get handeye calibration transformation
-    # quat_link_to_base = [0.86386745, -0.0818508,  -0.49183171, 0.0716590]
-    # t_link_to_base = np.array([-0.4615224, -0.4428805, 1.06529779])
-    # rot_link_to_base = R.from_quat(quat_link_to_base).as_matrix()
-    # T_link_to_base = np.vstack((
-    #     np.hstack((rot_link_to_base, t_link_to_base.reshape(3, 1))),
-    #     [0, 0, 0, 1]
-    # ))
-    #
-    # # get depth image, camera intrinsic and extrinsic parameters
-    # align_depth = True
-    # if align_depth:
-    #     base_rgb, base_depth, color_intr, depth_intr = rs_list[0].read_alignment()
-    #     print("color_intr:", color_intr)
-    #     print("aligned depth_intr:", depth_intr)
-    #
-    #     # Transformation from camera_color_optical frame to camera_link frame
-    #     quat_color_to_link= [-0.499, 0.499, -0.498, 0.503]
-    #     t_color_to_link = np.array([-0.000, 0.015, -0.000])  # no translation
-    #     rot_color_to_link= R.from_quat(quat_color_to_link).as_matrix()
-    #     T_color_to_link= np.vstack((
-    #         np.hstack((rot_color_to_link, t_color_to_link.reshape(3, 1))),
-    #         [0, 0, 0, 1]
-    #     ))
-    #     # T_color_to_link = np.linalg.inv(T_color_to_link)
-    #     extrinsics = T_link_to_base @ T_color_to_link
-    #
-    # else:
-    #     base_rgb, base_depth = rs_list[0].read()
-    #     depth_intr, _ = rs_list[
-    #         0].get_parameters()  # intrinsic of depth camera (camera_depth_frame or camera_depth_optical_frame)
-    #     print("origin depth_intr:", depth_intr)
-    #     extrinsics = T_link_to_base # camera_link is aligned with camera_depth_frame in realsense d435i
-    #
-    # # base_rgb = base_rgb[:, :, ::-1]
-    # # cv2.imshow("0", base_rgb)
-    # # cv2.imshow("1", base_depth)
-    # # cv2.waitKey(1000)  # 显示 1 秒后继续
-    # # cv2.destroyAllWindows()
-    # # np.savetxt("base_depth_values.txt", base_depth, fmt="%.3f")
-    #
-    # # get points
-    # # points = pixel_to_camera_points(base_depth, depth_intr)
-    # points = pixel_to_world_points(base_depth, depth_intr, extrinsics)
-    # print("points shape:", points.shape)
-    #
-    # check_value = True # check transformed points value
-    # if check_value:
-    #     check_points = points.reshape(-1, 3)
-    #     print("points shape for checking:", check_points.shape)
-    #     print("points (x min):", check_points[:, 0].min())
-    #     print("points (y min):", check_points[:, 1].min())
-    #     print("points (z min):", check_points[:, 2].min())
-    #     print("points (x max):", check_points[:, 0].max())
-    #     print("points (y max):", check_points[:, 1].max())
-    #     print("points (z max):", check_points[:, 2].max())
-    #
-    # visualize_points = True # visualize points
-    # if visualize_points:
-    #     picked_points = visualize_and_pick_point(points, base_rgb)
-    #
-    # # get masks
-    # print("start mask generation")
-    # sam_chkpt_path = hf_hub_download("ybelkada/segment-anything", "checkpoints/sam_vit_b_01ec64.pth")
-    # sam_model = build_sam_vit_b(checkpoint=sam_chkpt_path)
-    # sam_model.to("cuda")
-    # mask_generator = SamAutomaticMaskGenerator(sam_model)
-    # masks = mask_generator.generate(base_rgb)
-    #
-    # if not isinstance(base_rgb, np.ndarray): # Ensure base_rgb is in correct format for OpenCV
-    #     base_rgb = base_rgb.cpu().numpy()
-    # if base_rgb.dtype != np.uint8:
-    #     base_rgb = (base_rgb * 255).astype(np.uint8) if base_rgb.max() <= 1.0 else base_rgb.astype(np.uint8)
-    # base_rgb = np.ascontiguousarray(base_rgb)
-    #
-    # for mask in masks: # Draw masks
-    #     mask_area = np.uint8(mask['segmentation']) * 255
-    #     contours, _ = cv2.findContours(mask_area, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    #     for cnt in contours:
-    #         cv2.drawContours(base_rgb, [cnt], -1, (0, 255, 0), 3)
-    #
-    # cv2.imshow("mask", base_rgb) # display result
-    # cv2.waitKey(1000)
-    # cv2.destroyAllWindows()
-    #
-    # # get keypoints
-    # keypoint_config = get_config(config_path="/home/zhuoli/xtrainer_clover/configs/keypoint_config.yaml")
-    # keypoint_proposer = KeypointProposer(keypoint_config['keypoint_proposer'])
-    #
-    # candidate_keypoints, projected_img = keypoint_proposer.get_keypoints(base_rgb, points, masks)
-    # print("Candidate Keypoints:", candidate_keypoints)
-    # print("Projected Image Shape:", projected_img.shape)
-    #
-    # visualize= True # visualize keypoints
-    # if visualize:
-    #     cv2.imshow('Projected Image', projected_img)
-    #     cv2.waitKey(100000)
-    #     cv2.destroyAllWindows()
-    #
-    # # save keypoints as metadata
-    # metadata = {
-    #     'init_keypoint_positions': candidate_keypoints.tolist(),  # Ensure numpy arrays are converted
-    #     'num_keypoints': len(candidate_keypoints)
-    # }
-    #
-    # with open('metadata.json', 'w') as f:
-    #     json.dump(metadata, f, indent=4)
     keypoint_config = get_config(config_path="/home/zhuoli/xtrainer_clover/configs/keypoint_config.yaml")
     keypoint_proposer = KeypointProposer(keypoint_config['keypoint_proposer'])
     keypoints = keypoint_proposer.run(visualize_projection=True)
