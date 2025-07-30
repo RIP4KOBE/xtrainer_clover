@@ -113,6 +113,121 @@ class KeypointProposer:
     #         keypoint_count += 1
     #     return projected
 
+    # def _project_keypoints_to_img(self, rgb, candidate_pixels, candidate_rigid_group_ids, masks, features_flat,
+    #                               rotate_text_180=False):
+    #     projected = rgb.copy()
+    #     height, width = projected.shape[:2]
+    #
+    #     for keypoint_count, pixel in enumerate(candidate_pixels):
+    #         displayed_text = f"{keypoint_count}"
+    #         text_length = len(displayed_text)
+    #         box_width = 18 + 6 * (text_length - 1)
+    #         box_height = 18
+    #
+    #         # ---- Step 1: Draw white box with black border directly on projected image ----
+    #         top_left = (pixel[1] - box_width // 2, pixel[0] - box_height // 2)
+    #         bottom_right = (pixel[1] + box_width // 2, pixel[0] + box_height // 2)
+    #
+    #         # Draw filled white rectangle
+    #         cv2.rectangle(projected, top_left, bottom_right, (255, 255, 255), -1)
+    #         # Draw black border
+    #         cv2.rectangle(projected, top_left, bottom_right, (0, 0, 0), 2)
+    #
+    #         # ---- Step 2: Create a patch for the text only ----
+    #         patch = np.ones((box_height, box_width, 3), dtype=np.uint8) * 255  # white background
+    #         text_size = cv2.getTextSize(displayed_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+    #         text_x = (box_width - text_size[0]) // 2
+    #         text_y = (box_height + text_size[1]) // 2
+    #
+    #         # Draw text onto patch
+    #         cv2.putText(patch, displayed_text, (text_x, text_y),
+    #                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+    #
+    #         # ---- Step 3: Rotate text patch if needed ----
+    #         if rotate_text_180:
+    #             patch = cv2.rotate(patch, cv2.ROTATE_180)
+    #
+    #         # ---- Step 4: Overlay patch (text only) onto white box ----
+    #         y1 = max(0, top_left[1])
+    #         y2 = min(width, bottom_right[1])
+    #         x1 = max(0, top_left[0])
+    #         x2 = min(height, bottom_right[0])
+    #
+    #         # Ensure the patch fits entirely within image bounds
+    #         if 0 <= top_left[1] < width - box_width and 0 <= top_left[0] < height - box_height:
+    #             projected[top_left[1]:top_left[1] + box_height, top_left[0]:top_left[0] + box_width] = patch
+    #
+    #     return projected
+
+    # def _project_keypoints_to_img(self, rgb, candidate_pixels, candidate_rigid_group_ids, masks, features_flat,
+    #                               rotate_text_180=False):
+    #     projected = rgb.copy()
+    #     height, width = projected.shape[:2]
+    #
+    #     for keypoint_count, pixel in enumerate(candidate_pixels):
+    #         displayed_text = f"{keypoint_count}"
+    #         text_length = len(displayed_text)
+    #         box_width = 18 + 6 * (text_length - 1)
+    #         box_height = 18
+    #
+    #         # 确保像素坐标是整数
+    #         y, x = int(pixel[0]), int(pixel[1])
+    #
+    #         # 计算框的边界，确保在图像范围内
+    #         x1 = max(0, x - box_width // 2)
+    #         y1 = max(0, y - box_height // 2)
+    #         x2 = min(width, x + box_width // 2)
+    #         y2 = min(height, y + box_height // 2)
+    #
+    #         # 计算实际框的宽高（可能因边界裁剪而改变）
+    #         actual_width = x2 - x1
+    #         actual_height = y2 - y1
+    #
+    #         # 只有当框有足够的尺寸时才继续
+    #         if actual_width <= 0 or actual_height <= 0:
+    #             continue
+    #
+    #         # 绘制白色框
+    #         cv2.rectangle(projected, (x1, y1), (x2, y2), (255, 255, 255), -1)
+    #         # 绘制黑色边框
+    #         cv2.rectangle(projected, (x1, y1), (x2, y2), (0, 0, 0), 2)
+    #
+    #         # 创建文本补丁，与实际框大小相匹配
+    #         patch = np.ones((actual_height, actual_width, 3), dtype=np.uint8) * 255
+    #
+    #         # 计算文本尺寸
+    #         text_size = cv2.getTextSize(displayed_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+    #
+    #         # 居中放置文本
+    #         text_x = (actual_width - text_size[0]) // 2
+    #         text_y = (actual_height + text_size[1]) // 2
+    #
+    #         # 确保文本位置不为负
+    #         text_x = max(0, text_x)
+    #         text_y = max(text_size[1], text_y)
+    #
+    #         # 在补丁上绘制文本
+    #         cv2.putText(patch, displayed_text, (text_x, text_y),
+    #                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+    #
+    #         # 根据需要旋转文本
+    #         if rotate_text_180:
+    #             patch = cv2.rotate(patch, cv2.ROTATE_180)
+    #
+    #         # 将补丁覆盖到图像上
+    #         try:
+    #             projected[y1:y2, x1:x2] = patch
+    #         except ValueError as e:
+    #             # 打印错误，帮助调试尺寸不匹配问题
+    #             print(f"Error at keypoint {keypoint_count}: {e}")
+    #             print(f"Patch shape: {patch.shape}, Target area: ({y2 - y1}, {x2 - x1})")
+    #             # 尝试调整patch大小以匹配目标区域
+    #             if y2 - y1 > 0 and x2 - x1 > 0:
+    #                 resized_patch = cv2.resize(patch, (x2 - x1, y2 - y1))
+    #                 projected[y1:y2, x1:x2] = resized_patch
+    #
+    #     return projected
+
     def _project_keypoints_to_img(self, rgb, candidate_pixels, candidate_rigid_group_ids, masks, features_flat,
                                   rotate_text_180=False):
         projected = rgb.copy()
@@ -121,43 +236,78 @@ class KeypointProposer:
         for keypoint_count, pixel in enumerate(candidate_pixels):
             displayed_text = f"{keypoint_count}"
             text_length = len(displayed_text)
-            box_width = 18 + 6 * (text_length - 1)
-            box_height = 18
 
-            # ---- Step 1: Draw white box with black border directly on projected image ----
-            top_left = (pixel[1] - box_width // 2, pixel[0] - box_height // 2)
-            bottom_right = (pixel[1] + box_width // 2, pixel[0] + box_height // 2)
+            # Improvement: Dynamically adjust box size based on text length
+            # Provide more space for double digits and above
+            if text_length == 1:
+                box_width = 18
+            else:
+                # For double digits and above, add 8 pixels width per additional digit
+                box_width = 24 + 8 * (text_length - 2)
 
-            # Draw filled white rectangle
-            cv2.rectangle(projected, top_left, bottom_right, (255, 255, 255), -1)
+            box_height = 18  # Keep height unchanged or adjust as needed
+
+            # Ensure pixel coordinates are integers
+            y, x = int(pixel[0]), int(pixel[1])
+
+            # Calculate box boundaries, ensuring they're within image bounds
+            x1 = max(0, x - box_width // 2)
+            y1 = max(0, y - box_height // 2)
+            x2 = min(width, x + box_width // 2)
+            y2 = min(height, y + box_height // 2)
+
+            # Calculate actual box width and height (may change due to boundary clipping)
+            actual_width = x2 - x1
+            actual_height = y2 - y1
+
+            # Only proceed if the box has sufficient size
+            if actual_width <= 0 or actual_height <= 0:
+                continue
+
+            # Draw white box
+            cv2.rectangle(projected, (x1, y1), (x2, y2), (255, 255, 255), -1)
             # Draw black border
-            cv2.rectangle(projected, top_left, bottom_right, (0, 0, 0), 2)
+            cv2.rectangle(projected, (x1, y1), (x2, y2), (0, 0, 0), 2)
 
-            # ---- Step 2: Create a patch for the text only ----
-            patch = np.ones((box_height, box_width, 3), dtype=np.uint8) * 255  # white background
-            text_size = cv2.getTextSize(displayed_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-            text_x = (box_width - text_size[0]) // 2
-            text_y = (box_height + text_size[1]) // 2
+            # Create text patch that matches the actual box size
+            patch = np.ones((actual_height, actual_width, 3), dtype=np.uint8) * 255
 
-            # Draw text onto patch
+            # Improvement: Adjust font size based on text length
+            font_scale = 0.7 if text_length == 1 else 0.6
+
+            # Calculate text size
+            text_size = cv2.getTextSize(displayed_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2)[0]
+
+            # Center the text
+            text_x = (actual_width - text_size[0]) // 2
+            text_y = (actual_height + text_size[1]) // 2
+
+            # Ensure text position is not negative
+            text_x = max(0, text_x)
+            text_y = max(text_size[1], text_y)
+
+            # Draw text on the patch
             cv2.putText(patch, displayed_text, (text_x, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 0, 0), 2)
 
-            # ---- Step 3: Rotate text patch if needed ----
+            # Rotate text if needed
             if rotate_text_180:
                 patch = cv2.rotate(patch, cv2.ROTATE_180)
 
-            # ---- Step 4: Overlay patch (text only) onto white box ----
-            y1 = max(0, top_left[1])
-            y2 = min(width, bottom_right[1])
-            x1 = max(0, top_left[0])
-            x2 = min(height, bottom_right[0])
-
-            # Ensure the patch fits entirely within image bounds
-            if 0 <= top_left[1] < width - box_width and 0 <= top_left[0] < height - box_height:
-                projected[top_left[1]:top_left[1] + box_height, top_left[0]:top_left[0] + box_width] = patch
+            # Overlay patch onto the image - use exception handling to ensure size match
+            try:
+                projected[y1:y2, x1:x2] = patch
+            except ValueError as e:
+                # If sizes don't match, try resizing the patch
+                if y2 - y1 > 0 and x2 - x1 > 0:
+                    # Resize patch to match target area
+                    resized_patch = cv2.resize(patch, (x2 - x1, y2 - y1))
+                    projected[y1:y2, x1:x2] = resized_patch
+                else:
+                    print(f"Skipping keypoint {keypoint_count} due to invalid dimensions")
 
         return projected
+
 
     @torch.inference_mode()
     @torch.amp.autocast('cuda')
