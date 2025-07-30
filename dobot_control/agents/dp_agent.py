@@ -237,7 +237,8 @@ class BimanualDPAgent:
 
         return act
 
-    def modulate(self, obs: Dict[str, Any], last_action=None) -> Tuple[np.ndarray, bool]:
+    def modulate(self, obs: Dict[str, Any], last_action=None, bimanual_cotegory=None, reward=None) -> Tuple[np.ndarray,
+    bool]:
         base_img = obs['base_rgb']
         obs = self.dp.get_observation([obs], load_img=True)
         self.action_queue.clear()
@@ -264,6 +265,8 @@ class BimanualDPAgent:
                 base_img,
                 num_diffusion_iters=self.num_diffusion_iters,
                 traj_origin=last_action,
+                bimanual_category=bimanual_cotegory,
+                reward=reward,
             )
             time2 = time.time()
             print("DP planning time", time2 - time1)

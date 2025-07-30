@@ -20,6 +20,7 @@ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 import diffusers.training_utils as diffuser_utils
 from einops import rearrange, reduce
 from omegaconf import  open_dict
+from sqlalchemy.dialects.mssql.information_schema import constraints
 from torch.cuda import device
 from triton.language import dtype
 
@@ -850,25 +851,26 @@ class DiffusionPolicy:
 
         return traj_abs
 
-    def run_diffusion_es(self, stats, obs_deque, obj_img, num_diffusion_iters=None, reward=None, constraints=None,
-                         traj_origin=None,
+    def run_diffusion_es(self, stats, obs_deque, obj_img, num_diffusion_iters=None, bimanual_category=None,
+                         reward=None, traj_origin=None,
                          use_cem=False, cem_iters=20,
                          num_elites=32,
-                         temperature=0.1, visualize=True, composition_strategy: str = 'stochastic-sampling',
-                         bimanual_category: str = 'asym_l_dom'):
+                         temperature=0.1, visualize=True, composition_strategy: str = 'guided-sampling'):
         self.ema_nets.eval()
 
         if not num_diffusion_iters:
             num_diffusion_iters = self.num_diffusion_iters
 
-        if reward is None:
-            reward = self.generate_reward(stats["action"])
+        reward = self.generate_reward(stats["action"], reward_fn=reward)
 
-        if constraints is None:
-            # constraints =  self.coordination_constraints
-            # constraints =  self.left_reach_constraint
-            # constraints =  self.bimanual_reach_constraint
-            constraints =  self.position_coordination_constraints
+        if bimanual_category is not None:
+            if bimanual_category in ['uni_l', 'uni_r', 'uncoord_bi']:
+                constraints = None
+            else:
+                constraints =  self.position_coordination_constraints
+                # constraints =  self.coordination_constraints
+                # constraints =  self.left_reach_constraint
+                # constraints =  self.bimanual_reach_constraint
 
         with torch.no_grad():
             features = []
@@ -1046,7 +1048,7 @@ class DiffusionPolicy:
             deterministic=True,
             n_trunc_steps=5,
             noise_scale=1.0,
-            use_dp_noise=True,
+            use_dp_noise=False,
             use_guidance=False,
             last_action=None,
             gamma = 0.4,
@@ -1054,8 +1056,8 @@ class DiffusionPolicy:
         # Validate strategy types
         assert composition_strategy in ['stochastic-sampling', 'guided-sampling'], \
             f"Invalid composition strategy: {composition_strategy}"
-        assert bimanual_category in ['sym', 'asym_l_dom', 'asym_r_dom'], \
-            f"Invalid bimanual category: {bimanual_category}"
+        # assert bimanual_category in ['sym', 'asym_l_dom', 'asym_r_dom'], \
+        #     f"Invalid bimanual category: {bimanual_category}"
 
         # Determine timesteps
         if initial_rollout:
@@ -1153,7 +1155,7 @@ class DiffusionPolicy:
         population_trajectories = self.modulate_scheduler.add_noise(population_trajectories, noise, self.noise_scheduler.timesteps[-t])
         return population_trajectories
 
-    def generate_reward(self, stats):
+    def generate_reward(self, stats, reward_fn=None):
         """
         Each constraint is a non-differentiable black-box cost function that maps bimanual trajectory to some scalar cost to be minimized.
         """
@@ -1555,7 +1557,7 @@ class DiffusionPolicy:
             :return: Tensor of shape (batch,), representing the reward scores for each trajectory.
             """
             device = trajectory.device
-            trajectory = self.process_trajectory(trajectory,last_action, device=device)
+            trajectory = self.process_trajectory(trajectory, last_action, device=device)
             left_trajectory = trajectory[:, :, LEFT_ARM_6D_INDICES]
 
             # Extract predicted left arm ee positions
@@ -1876,8 +1878,10 @@ class DiffusionPolicy:
 
         # </editor-fold>
 
-
-        return avoid_right_collision
+        if reward_fn is not None:
+            return reward_fn
+        else:
+            return avoid_right_collision
 
 
     def coordination_constraints(

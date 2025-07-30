@@ -1,3 +1,5 @@
+import os.path
+
 import torch
 from torch.nn.functional import interpolate
 from kmeans_pytorch import kmeans
@@ -18,6 +20,7 @@ import open3d as o3d
 class KeypointProposer:
     def __init__(self, config):
         self.config = config
+        self.save_dir = self.config['save_dir']
         self.device = torch.device(self.config['device'])
         self.dinov2 = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14').eval().to(self.device)
         self.bounds_min = np.array(self.config['bounds_min'])
@@ -471,16 +474,19 @@ class KeypointProposer:
             cv2.waitKey(5000)
             cv2.destroyAllWindows()
             projected_img = cv2.rotate(projected_img, cv2.ROTATE_180)
-            cv2.imwrite('/home/zhuoli/xtrainer_clover/configs/projected_image.png', projected_img)
+            img_pth = os.path.join(self.save_dir, "scene_img.png")
+            cv2.imwrite(img_pth, projected_img)
+            # cv2.imwrite('/home/zhuoli/xtrainer_clover/configs/scene_img.png', projected_img)
 
         # save keypoints as metadata
         candidate_keypoints = candidate_keypoints.tolist()
+        keypoints_pth = os.path.join(self.save_dir, "keypoints.json")
         metadata = {
             'keypoint_positions': candidate_keypoints,  # Ensure numpy arrays are converted
             'num_keypoints': len(candidate_keypoints)
         }
 
-        with open('/home/zhuoli/xtrainer_clover/configs/metadata.json', 'w') as f:
+        with open(keypoints_pth, 'w') as f:
             json.dump(metadata, f, indent=4)
 
         return candidate_keypoints

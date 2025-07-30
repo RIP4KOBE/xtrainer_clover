@@ -13,3 +13,4 @@ keypoint_proposer:
   seed: *seed
   handeye_translation: [-0.688436053, -0.511152620, 1.247442]
   handeye_quaternion: [0.84561027, -0.0208527, -0.53332, 0.00861711]  # [x, y, z, w]
+  save_dir: '../assets/scene_observation/'

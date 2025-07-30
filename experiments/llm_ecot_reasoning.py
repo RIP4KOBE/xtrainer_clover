@@ -1,11 +1,25 @@
 import dspy
 from dspy.teleprompt import LabeledFewShot
 from dspy.adapters import ChatAdapter
+from audio_assistant import AudioAssistant
+# from ModelTrain.dp.utils import get_config
 import textwrap
+import yaml
+import time
 import glob
 import json
 import os
 import re
+
+
+def get_config(config_path=None):
+    if config_path is None:
+        this_file_dir = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(this_file_dir, 'configs/configs.yaml')
+    assert config_path and os.path.exists(config_path), f'configs file does not exist ({config_path})'
+    with open(config_path, 'r') as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
+    return config
 
 
 class ECOTAdapter(ChatAdapter):
@@ -17,9 +31,13 @@ class ECOTAdapter(ChatAdapter):
         self.system_prompt = system_prompt
 
     def format_task_description(self, signature):
+        # 使用textwrap.dedent()函数去除字符串中的缩进
         instructions = textwrap.dedent(self.system_prompt)
+        # 将字符串按行分割，并在每行前添加8个空格
         objective = ("\n" + " " * 8).join([""] + instructions.splitlines())
+        # 返回格式化后的任务描述
         return f"In adhering to this structure, your objective is: {objective}"
+
 
 class GenerateECOTReasoning(dspy.Signature):
 
@@ -49,15 +67,25 @@ class EmbodiedCoTReasoner(dspy.Module):
 
 class BimanualEcotReasoning:
     def __init__(self, config, example_path):
-        self.config = config
         self.example_path = example_path
+        self.config = get_config(config_path=config)
+        self.api_key = self.config['api_key']
+        self.base_url = self.config['base_url']
 
-        # inference input
-        self.language_feedback = self.config['feedback']
-        self.keypoints = self.config.get('keypoints', {})
-        self.scene_image = self.config.get('scene_image', None)
+        # initialize audio assistant
+        self.audio_model = self.config['audio_assistant']['model']
+        self.user_input_filename = self.config['audio_assistant']['user_input_filename']
+        self.audio_assistant = AudioAssistant(self.audio_model, self.api_key, self.base_url, self.user_input_filename)
+
+        # initialize LLM
+        self.model = self.config['mllm']['model']
+        self.temperature = self.config['mllm']['temperature']
+        self.max_tokens = self.config['mllm']['max_tokens']
+        self.keypoints_pth = self.config['mllm']['keypoints']
+        self.scene_image_pth = self.config['mllm']['scene_img']
 
         # inference output
+        self.feedback = None
         self.reasoning = None
         self.bimanual_category = None
         self.reward_function = None
@@ -68,7 +96,7 @@ class BimanualEcotReasoning:
         feedback_path = os.path.join(self.example_path, 'feedback.txt')
         with open(feedback_path, 'r') as f:
             feedback = f.read()
-        feedback = feedback.split('\n')
+        feedback = feedback.split('\n\n')
 
         # Load keypoints
         keypoints_paths = [os.path.join(self.example_path, 'keypoints', f'keypoints_{i}.json') for i in range(len(
@@ -86,8 +114,7 @@ class BimanualEcotReasoning:
             if os.path.exists(img_path):
                 scene_images.append(dspy.Image.from_file(img_path))
             else:
-                # Placeholder if image doesn't exist
-                scene_images.append(None)
+                print("Warning: Scene image not found at", img_path)
 
         # Load ecot reasoning
         reasoning_path = os.path.join(self.example_path,'' ,'reasoning.txt')
@@ -130,6 +157,7 @@ class BimanualEcotReasoning:
             ))
         return examples
 
+
     def build_llm_module(self):
         # Load system prompt
         system_prompt_path = os.path.join(self.example_path, 'system_prompt.txt')
@@ -141,11 +169,11 @@ class BimanualEcotReasoning:
         # Configure LM
         self.adapter = ECOTAdapter(system_prompt=self.system_prompt)
         self.llm = dspy.LM(
-            model=self.config['model'],
-            temperature=self.config['temperature'],
-            max_tokens=self.config['max_tokens'],
-            api_key=self.config['api_key'],
-            base_url=self.config['base_url'],
+            model=self.model,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            api_key=self.api_key,
+            base_url=self.base_url,
         )
 
         dspy.settings.configure(lm=self.llm, adapter=self.adapter)
@@ -158,6 +186,7 @@ class BimanualEcotReasoning:
         tp = LabeledFewShot(k=len(examples))
         self.llm_module = tp.compile(llm_module, trainset=examples)
 
+
     def generate_ecot_reasoning(self):
         """
         Generate embodied chain-of-thought reasoning from language feedback, scene image, and keypoints
@@ -166,19 +195,23 @@ class BimanualEcotReasoning:
         self.build_llm_module()
 
         # process inputs
-        keypoints_json = json.dumps(self.keypoints)
+        keypoints = json.dumps(self.keypoints_pth)
         scene_image_obj = None
-        if self.scene_image is not None:
-            scene_image_obj = dspy.Image.from_file(self.scene_image)
+        if self.scene_image_pth is not None:
+            scene_image_obj = dspy.Image.from_file(self.scene_image_pth)
+
+        # run the audio assistant in interactive mode
+        self.audio_assistant.record_audio()
+        self.feedback = self.audio_assistant.transcribe_audio()
 
         # process outputs
-        output = self.llm_module(feedback=self.language_feedback, keypoints=keypoints_json, scene_image=scene_image_obj)
+        output = self.llm_module(feedback=self.feedback, keypoints=keypoints, scene_image=scene_image_obj)
 
         self.reasoning = output.ecot_reasoning
         self.bimanual_category = output.bimanual_category
         self.reward_code = output.reward_code
 
-        print(f'LANGUAGE FEEDBACK: {self.language_feedback}')
+        print(f'LANGUAGE FEEDBACK: {self.feedback}')
         # print(f'KEYPOINTS: {self.keypoints}')
         print(f'ECOT REASONING: {self.reasoning}')
         print(f'BIMANUAL CATEGORY: {self.bimanual_category}')
@@ -206,86 +239,17 @@ class BimanualEcotReasoning:
         return {
             'reasoning': self.reasoning,
             'bimanual_category': self.bimanual_category,
-            'reward_function': self.reward_function
+            'reward_function': self.reward_code
         }
 
 
 if __name__ == '__main__':
     # Example usage
     example_path = '../assets/ecot_prompt'
-
-    # Sample keypoints dict based on the image format
-    keypoints = {
-        "keypoint_positions": [
-        [
-            -0.5255318159787837,
-            -0.6410613610313141,
-            0.17507989435444005
-        ],
-        [
-            -0.06437652336860511,
-            -0.6607575073329838,
-            0.2593555254794204
-        ],
-        [
-            -0.08437955102591133,
-            -0.664174649129029,
-            0.14815580138111661
-        ],
-        [
-            -0.1877555019387892,
-            -0.6078141598882151,
-            0.07507610074284776
-        ],
-        [
-            0.12016399813826473,
-            -0.590811761683398,
-            0.10805210429815504
-        ],
-        [
-            -0.1515832966173195,
-            -0.528417194438881,
-            0.11444241220729201
-        ],
-        [
-            -0.013793949198795286,
-            -0.5003526043348581,
-            0.13383476327068244
-        ],
-        [
-            0.12037205004461027,
-            -0.49829600886419306,
-            0.1274565447258993
-        ],
-        [
-            0.006969026536109646,
-            -0.4294304544767852,
-            0.1840936898008454
-        ],
-        [
-            -0.5611342554649539,
-            -0.3845788288950187,
-            0.16190481563697223
-        ],
-        [
-            -0.5875303569769578,
-            -0.3507587713071481,
-            0.2760577511809834
-        ]
-    ],
-    "num_keypoints": 11
-    }
-
-    config = {
-        'model': 'gpt-4o',
-        'temperature': 0.2,
-        'max_tokens': 1000,
-        'api_key': "sk-mSyK58YNPAdpDcyL5cFb693b61Ff4fD8A367539e68C5898c",
-        'base_url': 'https://www.jcapikey.com/v1',
-        'feedback': 'Adjust your left hand to wipe the plate properly',
-        'keypoints': keypoints,
-        'scene_image': '../assets/ecot_prompt/scene_image/scene_0.png'  # Path to RGB image
-    }
-
+    config = "../configs/llm_config.yaml"
     ecot_reasoner = BimanualEcotReasoning(config=config, example_path=example_path)
+    time1 = time.time()
     result = ecot_reasoner.generate_ecot_reasoning()
+    time2 = time.time()
+
+    print(f'Time taken: {time2 - time1:.2f} seconds')

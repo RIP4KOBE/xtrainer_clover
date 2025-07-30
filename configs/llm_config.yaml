@@ -1,0 +1,15 @@
+api_key: "sk-mSyK58YNPAdpDcyL5cFb693b61Ff4fD8A367539e68C5898c"
+base_url: 'https://www.jcapikey.com/v1'
+
+mllm:
+  model: 'gpt-4o'
+  temperature: 0.2
+  max_tokens: 1000
+  keypoints: '../assets/scene_observation/keypoints.json'
+  scene_img: '../assets/scene_observation/scene_img.png'
+
+audio_assistant:
+  model: 'whisper-1'
+  user_input_filename: "../assets/chat_audio/language_input.wav"
+  curigpt_output_filename: "../assets/chat_audio/curigpt_output.mp3"
+  model_name: "qwen-vl-max"

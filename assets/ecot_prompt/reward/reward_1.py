@@ -10,6 +10,6 @@ def reward_fn(trajectory, last_action):
         initial_height = right_ee_position[i, 0, 2]
         final_height = right_ee_position[i, -1, 2]
         rel_height = initial_height - final_height
-        scores[i] = -abs(rel_height - 0.05)  #
+        scores[i] = -abs(rel_height - 0.05)
     scores = -torch.as_tensor(scores, device=device)
     return scores, {}
