@@ -99,15 +99,22 @@ class RealSenseCamera(CameraDriver):
 
         color_frame = frames.get_color_frame()
         color_image = np.asanyarray(color_frame.get_data())
-        color_image = color_image[:, :, ::-1]
         aligned_depth_frame = frames.get_depth_frame()
         aligned_depth_image = np.asanyarray(aligned_depth_frame.get_data())
+
+        # rotate 180 degree's because everything is upside down in order to center the camera
+        if self._flip:
+            rgb = cv2.rotate(color_image, cv2.ROTATE_180)
+            depth = cv2.rotate(aligned_depth_image, cv2.ROTATE_180)
+        else:
+            rgb = color_image
+            depth = aligned_depth_image
 
         depth_intrinsics = aligned_depth_frame.profile.as_video_stream_profile().intrinsics
         color_intrinsics = color_frame.profile.as_video_stream_profile().intrinsics
 
 
-        return color_image, aligned_depth_image, color_intrinsics, depth_intrinsics
+        return rgb, depth, color_intrinsics, depth_intrinsics
 
 
     def get_parameters(self):

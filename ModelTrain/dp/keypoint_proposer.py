@@ -35,7 +35,7 @@ class KeypointProposer:
             [0, 0, 0, 1]
         ))
 
-    def get_keypoints(self, rgb, points, masks):
+    def get_keypoints(self, rgb, points, masks, rotate_text_180=False):
         # preprocessing
         transformed_rgb, rgb, points, masks, shape_info = self._preprocess(rgb, points, masks)
 
@@ -69,7 +69,7 @@ class KeypointProposer:
 
         # project keypoints to image space
         projected = self._project_keypoints_to_img(rgb, candidate_pixels, candidate_rigid_group_ids, masks,
-                                                   features_flat)
+                                                   features_flat, rotate_text_180)
         return candidate_keypoints, projected
 
     def _preprocess(self, rgb, points, masks):
@@ -93,24 +93,70 @@ class KeypointProposer:
 
         return transformed_rgb, rgb, points, masks, shape_info
 
-    def _project_keypoints_to_img(self, rgb, candidate_pixels, candidate_rigid_group_ids, masks, features_flat):
+    # def _project_keypoints_to_img(self, rgb, candidate_pixels, candidate_rigid_group_ids, masks, features_flat):
+    #     projected = rgb.copy()
+    #     # overlay keypoints on the image
+    #     for keypoint_count, pixel in enumerate(candidate_pixels):
+    #         displayed_text = f"{keypoint_count}"
+    #         text_length = len(displayed_text)
+    #         # draw a box
+    #         box_width = 30 + 10 * (text_length - 1)
+    #         box_height = 30
+    #         cv2.rectangle(projected, (pixel[1] - box_width // 2, pixel[0] - box_height // 2),
+    #                       (pixel[1] + box_width // 2, pixel[0] + box_height // 2), (255, 255, 255), -1)
+    #         cv2.rectangle(projected, (pixel[1] - box_width // 2, pixel[0] - box_height // 2),
+    #                       (pixel[1] + box_width // 2, pixel[0] + box_height // 2), (0, 0, 0), 2)
+    #         # draw text
+    #         org = (pixel[1] - 7 * (text_length), pixel[0] + 7)
+    #         color = (255, 0, 0)
+    #         cv2.putText(projected, str(keypoint_count), org, cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+    #         keypoint_count += 1
+    #     return projected
+
+    def _project_keypoints_to_img(self, rgb, candidate_pixels, candidate_rigid_group_ids, masks, features_flat,
+                                  rotate_text_180=False):
         projected = rgb.copy()
-        # overlay keypoints on the image
+        height, width = projected.shape[:2]
+
         for keypoint_count, pixel in enumerate(candidate_pixels):
             displayed_text = f"{keypoint_count}"
             text_length = len(displayed_text)
-            # draw a box
             box_width = 30 + 10 * (text_length - 1)
             box_height = 30
-            cv2.rectangle(projected, (pixel[1] - box_width // 2, pixel[0] - box_height // 2),
-                          (pixel[1] + box_width // 2, pixel[0] + box_height // 2), (255, 255, 255), -1)
-            cv2.rectangle(projected, (pixel[1] - box_width // 2, pixel[0] - box_height // 2),
-                          (pixel[1] + box_width // 2, pixel[0] + box_height // 2), (0, 0, 0), 2)
-            # draw text
-            org = (pixel[1] - 7 * (text_length), pixel[0] + 7)
-            color = (255, 0, 0)
-            cv2.putText(projected, str(keypoint_count), org, cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-            keypoint_count += 1
+
+            # ---- Step 1: Draw white box with black border directly on projected image ----
+            top_left = (pixel[1] - box_width // 2, pixel[0] - box_height // 2)
+            bottom_right = (pixel[1] + box_width // 2, pixel[0] + box_height // 2)
+
+            # Draw filled white rectangle
+            cv2.rectangle(projected, top_left, bottom_right, (255, 255, 255), -1)
+            # Draw black border
+            cv2.rectangle(projected, top_left, bottom_right, (0, 0, 0), 2)
+
+            # ---- Step 2: Create a patch for the text only ----
+            patch = np.ones((box_height, box_width, 3), dtype=np.uint8) * 255  # white background
+            text_size = cv2.getTextSize(displayed_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+            text_x = (box_width - text_size[0]) // 2
+            text_y = (box_height + text_size[1]) // 2
+
+            # Draw text onto patch
+            cv2.putText(patch, displayed_text, (text_x, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+
+            # ---- Step 3: Rotate text patch if needed ----
+            if rotate_text_180:
+                patch = cv2.rotate(patch, cv2.ROTATE_180)
+
+            # ---- Step 4: Overlay patch (text only) onto white box ----
+            y1 = max(0, top_left[1])
+            y2 = min(width, bottom_right[1])
+            x1 = max(0, top_left[0])
+            x2 = min(height, bottom_right[0])
+
+            # Ensure the patch fits entirely within image bounds
+            if 0 <= top_left[1] < width - box_width and 0 <= top_left[0] < height - box_height:
+                projected[top_left[1]:top_left[1] + box_height, top_left[0]:top_left[0] + box_width] = patch
+
         return projected
 
     @torch.inference_mode()
@@ -238,15 +284,13 @@ class KeypointProposer:
                 0].get_parameters()  # intrinsic of depth camera (camera_depth_frame or camera_depth_optical_frame)
             extrinsics = self.T_link_to_base  # camera_link is aligned with camera_depth_frame in realsense d435i
 
-        # base_rgb = base_rgb[:, :, ::-1]
         # cv2.imshow("0", base_rgb)
-        # cv2.imshow("1", base_depth)
-        # cv2.waitKey(1000)  # 显示 1 秒后继续
+        # # cv2.imshow("1", base_depth)
+        # cv2.waitKey(3000)  # 显示 1 秒后继续
         # cv2.destroyAllWindows()
-        # np.savetxt("base_depth_values.txt", base_depth, fmt="%.3f")
+        # cv2.imwrite('/home/zhuoli/xtrainer_clover/configs/base_rgb.png', base_rgb)
 
         # get points
-        # points = pixel_to_camera_points(base_depth, depth_intr)
         points = pixel_to_world_points(base_depth, depth_intr, extrinsics)
 
         if check_value:
@@ -268,29 +312,15 @@ class KeypointProposer:
         sam_model.to("cuda")
         mask_generator = SamAutomaticMaskGenerator(sam_model)
         masks = mask_generator.generate(base_rgb)
-        # if not isinstance(base_rgb, np.ndarray):  # Ensure base_rgb is in correct format for OpenCV
-        #     base_rgb = base_rgb.cpu().numpy()
-        # if base_rgb.dtype != np.uint8:
-        #     base_rgb = (base_rgb * 255).astype(np.uint8) if base_rgb.max() <= 1.0 else base_rgb.astype(np.uint8)
-        # base_rgb = np.ascontiguousarray(base_rgb)
-        #
-        # for mask in masks:  # Draw masks
-        #     mask_area = np.uint8(mask['segmentation']) * 255
-        #     contours, _ = cv2.findContours(mask_area, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        #     for cnt in contours:
-        #         cv2.drawContours(base_rgb, [cnt], -1, (0, 255, 0), 3)
-        #
-        # cv2.imshow("mask", base_rgb)  # display result
-        # cv2.waitKey(1000)
-        # cv2.destroyAllWindows()
 
-        candidate_keypoints, projected_img = self.get_keypoints(base_rgb, points, masks)
+        candidate_keypoints, projected_img = self.get_keypoints(base_rgb, points, masks, rotate_text_180=True)
         print("Candidate Keypoints:", candidate_keypoints)
 
         if visualize_projection:
             cv2.imshow('Projected Image', projected_img)
             cv2.waitKey(5000)
             cv2.destroyAllWindows()
+            projected_img = cv2.rotate(projected_img, cv2.ROTATE_180)
             cv2.imwrite('/home/zhuoli/xtrainer_clover/configs/projected_image.png', projected_img)
 
         # save keypoints as metadata
