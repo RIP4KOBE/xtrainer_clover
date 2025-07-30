@@ -121,8 +121,8 @@ class KeypointProposer:
         for keypoint_count, pixel in enumerate(candidate_pixels):
             displayed_text = f"{keypoint_count}"
             text_length = len(displayed_text)
-            box_width = 30 + 10 * (text_length - 1)
-            box_height = 30
+            box_width = 18 + 6 * (text_length - 1)
+            box_height = 18
 
             # ---- Step 1: Draw white box with black border directly on projected image ----
             top_left = (pixel[1] - box_width // 2, pixel[0] - box_height // 2)
