@@ -8,9 +8,11 @@ from dataclasses import dataclass
 import numpy as np
 import tyro
 import threading
-import torch
-# import keyboard
 from pynput import keyboard
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from multiprocessing import Process, Queue
+
+
 
 
 from dobot_control.env import RobotEnv
@@ -23,7 +25,7 @@ from dobot_control.robots.robot import BimanualRobot, PrintRobot
 from ModelTrain.dp.utils import get_config
 from ModelTrain.dp.keypoint_proposer import KeypointProposer
 from experiments.run_control import launch_robot_server
-from experiments.llm_ecot_reasoning import BimanualEcotReasoning
+# from experiments.llm_ecot_reasoning import BimanualEcotReasoning
 from ModelTrain.dp.utils import sixd_to_rotation_vector
 
 from scripts.manipulate_utils import load_ini_data_camera
@@ -39,8 +41,8 @@ class Args:
     agent_name: str = "dp"
     act_ckpt_path: str = "./ckpt/act/tidying_up_bowls_abcefg_mix_0925"
     # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_6d_delta_normalization_20250619/last.ckpt"
-    dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_absolute_6d_normalization_20250619/last.ckpt"
-    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/multimodal_dp_plate_wiping_eef_absolute_6d_20250626/last.ckpt"
+    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_absolute_6d_normalization_20250619/last.ckpt"
+    dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/multimodal_dp_plate_wiping_eef_absolute_6d_20250626/last.ckpt"
     dp_model = None
     act_model = None
     obj_correction = False
@@ -50,7 +52,7 @@ class Args:
     pred_eef_delta_6d = False
     bmp_ckpt_pth: str = ("/media/zhuoli/8ECE-77DB/xtrainer/model/BMP/2025.06.24/00.33.33_train_bimanual_motion_prior"
                          "/checkpoints/latest.ckpt")
-    keypoint_congif_path: str = "./ModelTrain/dp/configs/keypoint_proposer.yaml"
+    keypoint_congif_path: str = "../configs/keypoint_config.yaml"
     mllm_config_path: str = "../configs/llm_config.yaml"
     ecot_example_path: str = '../assets/ecot_prompt'
 
@@ -62,6 +64,8 @@ lock = threading.Lock()
 
 running = True
 mode = "diffusion"  # "modulate" or "diffusion"
+llm_called = False
+
 
 def on_press(key):
     global running, mode
@@ -107,6 +111,63 @@ def run_thread_cam(rs_cam, which_cam):
     else:
         print("Camera index error! ")
 
+def run_llm_in_process(config_path, example_path, result_queue):
+    try:
+        print("[LLM] reasoning started...")
+        from experiments.llm_ecot_reasoning import BimanualEcotReasoning
+        reasoner = BimanualEcotReasoning(config=config_path, example_path=example_path)
+        result = reasoner.generate_ecot_reasoning()
+        print("[LLM] reasoning finished...")
+        result_queue.put(result)
+    except Exception as e:
+        result_queue.put({"error": str(e)})
+
+    # ensure the process exits cleanly
+    # os._exit(0)
+
+
+def run_llm_reasoning(config_path, example_path, timeout=50):
+    result_queue = Queue()
+    p = Process(target=run_llm_in_process, args=(config_path, example_path, result_queue))
+    p.start()
+    p.join(timeout=timeout)
+
+    if p.is_alive():
+        print("LLM reasoning is taking too long, terminating the process...")
+        p.terminate()
+        p.join()
+        return {
+            'bimanual_category': 'default',
+            'reward_function': 'def reward_fn(*args, **kwargs): return 0, {}'
+        }
+
+    if not result_queue.empty():
+        print("LLM reasoning completed successfully.")
+        result = result_queue.get()
+        return result
+    else:
+        print("LLM reasoning did not return a result within the timeout period.")
+        return {
+                            'bimanual_category': 'uni_l',
+                            'reward_function' : """
+                            def reward_fn(trajectory, last_action):
+                                device = trajectory.device
+                                trajectory = self.process_trajectory(trajectory, last_action, device=device)
+                                left_trajectory = trajectory[:, :, LEFT_ARM_6D_INDICES]
+                            
+                                left_ee_position = left_trajectory[:, :, :3]
+                                scores = np.zeros(self.sampling_batch_size)
+                            
+                                for i in range(self.sampling_batch_size):
+                                    initial_height = left_ee_position[i, 0, 2]
+                                    final_height = left_ee_position[i, -1, 2]
+                                    scores[i] = final_height - initial_height
+                                scores = -torch.as_tensor(scores, device=device)
+                                return scores, {}
+                            """
+        }
+
+
 
 def main(args):
 
@@ -114,7 +175,7 @@ def main(args):
     dobot_robot_l, dobot_robot_r, dobot_robot = launch_robot_server(args)
 
     # global variables
-    global running, eef_delta, eef_action, eef_action_6d, modulation_finished
+    global running, eef_delta, eef_action, eef_action_6d, modulation_finished, llm_called
 
     # camera init
     global image_left, image_right, image_top, thread_run
@@ -131,8 +192,12 @@ def main(args):
     thread_cam_top.start()
     print("camera thread init success...")
 
-    thread_keypoint = threading.Thread(target=run_keypoint_proposer, args=(args.keypoint_congif_path, False, 10))
-    thread_keypoint.start()
+    # build llm executor
+    # executor = ThreadPoolExecutor(max_workers=1)
+    # ecot_reasoner = BimanualEcotReasoning(config=args.mllm_config_path, example_path=args.ecot_example_path)
+
+    # thread_keypoint = threading.Thread(target=run_keypoint_proposer, args=(args.keypoint_congif_path, False, 10))
+    # thread_keypoint.start()
     print("keypoint proposer thread started...")
     show_canvas = np.zeros((480, 640 * 3, 3), dtype=np.uint8)
     time.sleep(2)
@@ -285,18 +350,41 @@ def main(args):
                     action = prediction
 
             elif mode == "modulate":
-                # ecot reasoning
-                ecot_reasoner = BimanualEcotReasoning(config=args.mllm_config_path, example_path=args.ecot_example_path)
-                ecot_result = ecot_reasoner.generate_ecot_reasoning()
-                bimanual_cotegory = ecot_result['bimanual_category']
-                language_reward = ecot_result['reward_function']
 
-                # diffusion modulation
+                # # ecot reasoning
+                # future = executor.submit(ecot_reasoner.generate_ecot_reasoning)
+                #
+                # try:
+                #     ecot_result = future.result(timeout=30)
+                # except TimeoutError:
+                #     raise TimeoutError("ECOT reasoning timed out")
+
+                # ecot_result = ecot_reasoner.generate_ecot_reasoning()
+                start_time = time.time()
+                if not llm_called:
+                    ecot_result = run_llm_reasoning(args.mllm_config_path, args.ecot_example_path)
+
+                    ecot_reasoning = ecot_result['reasoning']
+                    bimanual_cotegory = ecot_result['bimanual_category']
+                    language_reward = ecot_result['reward_function']
+
+                    print("ecot_reasoning:", ecot_reasoning)
+                    print("bimanual_cotegory:", bimanual_cotegory)
+                    print("language_reward:", language_reward)
+
+
+                # bimanual diffusion modulation
+                # print("start bimanual diffusion modulation...")
                 if args.pred_eef_absolute_6d:
                     prediction, modulation_finished = dp_model.modulate(dp_observation,last_action=last_eef_action,
                                                                         bimanual_cotegory=bimanual_cotegory,
                                                                         reward=language_reward
                                                                         )  # Use modulated trajectory
+                    llm_called = True
+                    end_time = time.time()
+
+                    print("overall bimanual adaptation time consumed:", end_time - start_time)
+
                     eef_modulation_6d = prediction
                     eef_modulation_6d_left_pos = eef_modulation_6d[:3]
                     eef_modulation_6d_left_rot = eef_modulation_6d[3:9]
@@ -431,6 +519,7 @@ def main(args):
         if args.agent_name == "dp" and mode == "modulate" and modulation_finished:
             print("Trajectory execution finished. Waiting for next user input...")
             running = False
+            llm_called = False
 
 
     thread_run = False
@@ -442,5 +531,7 @@ def main(args):
 
 
 if __name__ == "__main__":
+    import multiprocessing as mp
+    mp.set_start_method("spawn", force=True)  # 或 "fork"，Linux 可用 fork
     main(tyro.cli(Args))
 

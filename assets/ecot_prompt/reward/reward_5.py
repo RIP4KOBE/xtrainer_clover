@@ -4,7 +4,7 @@ def reward_fn(trajectory, last_action):
     left_trajectory = trajectory[:, :, LEFT_ARM_6D_INDICES]
 
     left_ee_position = left_trajectory[:, :, :3]
-    plate_position = keypoints[18]
+    plate_position = keypoints[4]
     safe_distance = 0.05  # Minimum distance to the bottle
     scores = np.zeros(self.sampling_batch_size)
 

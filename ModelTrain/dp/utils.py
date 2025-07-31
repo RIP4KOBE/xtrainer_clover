@@ -551,7 +551,7 @@ def align_trajs_to_origin(population_trajectories, traj_origin):
     return aligned_population_trajectories, aligned_left_ee_positions, aligned_right_ee_positions
 
 
-def bimanual_coordinator(mode: str,
+def bimanual_coordinator(bimanual_category: str,
                          traj_origin: np.ndarray,
                          best_trajectory: np.ndarray) -> np.ndarray:
     """
@@ -565,37 +565,40 @@ def bimanual_coordinator(mode: str,
     Returns:
         np.ndarray: updated traj_origin with selected parts from best_trajectory
     """
-    assert mode in ["left_eef_pos", "left_eef_rot", "left_gripper", "right_eef_pos", "right_eef_rot", "right_gripper", "bimanual"], f"Invalid mode: {mode}"
+    # assert mode in ["left_eef_pos", "left_eef_rot", "left_gripper", "right_eef_pos", "right_eef_rot", "right_gripper", "bimanual"], f"Invalid mode: {mode}"
     # assert traj_origin.shape == 14 and best_trajectory.shape[2] == 14, "Trajectory dim must be 14"
+    assert bimanual_category in ["uni_l", "uni_r", "uncoord_bi", "asym_l_dom", "asym_r_dom", "sym"], \
+        f"Invalid bimanual category: {bimanual_category}"
+
     coordinate_traj = np.tile(traj_origin, (best_trajectory.shape[0], 1))
 
     print("coordinate_traj", coordinate_traj.shape, "best_trajectory", best_trajectory.shape)
 
-    if mode == "left_eef_pos":
+    if bimanual_category == "uni_l":
         # Only update left arm eef pose
         coordinate_traj[:, :3] = best_trajectory[:, :3]
 
-    elif mode == "left_eef_rot":
+    elif bimanual_category == "left_eef_rot":
         # Only update left arm eef rotation
         coordinate_traj[:, 3:9] = best_trajectory[:, 3:9]
 
-    elif mode == "left_gripper":
+    elif bimanual_category == "left_gripper":
         # Only update left arm gripper
         coordinate_traj[:, 9] = best_trajectory[:, 9]
 
-    elif mode == "right_eef_pos":
+    elif bimanual_category == "uni_r":
         # Only update right arm jeef pose
         coordinate_traj[:, 10:13] = best_trajectory[:, 10:13]
 
-    elif mode == "right_eef_rot":
+    elif bimanual_category == "right_eef_rot":
         # Only update right arm eef rotation
         coordinate_traj[:, 13:19] = best_trajectory[:, 13:19]
 
-    elif mode == "right_gripper":
+    elif bimanual_category == "right_gripper":
         # Only update right arm gripper
         coordinate_traj[:, 19] = best_trajectory[:, 19]
 
-    elif mode == "bimanual":
+    elif bimanual_category == "sym":
         # Update both arms
         coordinate_traj[:, :3] = best_trajectory[:, :3]
         coordinate_traj[:, 10:13] = best_trajectory[:, 10:13]
