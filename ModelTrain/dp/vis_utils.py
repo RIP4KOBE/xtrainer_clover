@@ -480,12 +480,104 @@ def visualize_and_pick_point(points: np.ndarray, base_rgb: np.ndarray) -> None:
     return None
 
 
+# def vis_action(sample, l_visualize_strat=None, r_visualize_strat=None):
+#     """
+#     Visualize predicted bimanual delta pose.
+#
+#     Args:
+#         action (B, T, action_dim): Predicted action tensor, where B is batch size, T is sequence length, and action_dim is the dimension of the action space.
+#         l_visualize_strat: target pose for the left arm
+#         r_visualize_strat: target pose for the right arm
+#     """
+#     if isinstance(sample, torch.Tensor):
+#         sample = sample.detach().cpu().numpy()
+#
+#     l_visualize_strat = l_visualize_strat
+#     r_visualize_strat = r_visualize_strat
+#     traj_len = sample.shape[1]
+#
+#     # Setup figure
+#     fig = plt.figure(figsize=(16, 8))
+#     ax1 = fig.add_subplot(121, projection='3d')
+#     ax2 = fig.add_subplot(122, projection='3d')
+#
+#     ax1.set_title(f"Left Arm -  Trajectories Distribution")
+#     ax2.set_title(f"Right Arm - Trajectories Distribution")
+#
+#     for ax in (ax1, ax2):
+#         ax.set_xlabel("X")
+#         ax.set_ylabel("Y")
+#         ax.set_zlabel("Z")
+#         ax.grid(True, alpha=0.3)
+#
+#     # Color map for different starting poses
+#     colors = plt.cm.rainbow(np.linspace(0, 1))
+#
+#     # Plot starting poses with larger markers
+#     ax1.scatter(*l_visualize_strat[0:3], color="r", marker='o', s=100,
+#                 edgecolors='black', linewidth=2,
+#                 label=f'Left Start', alpha=1.0)
+#     ax2.scatter(*r_visualize_strat[0:3], color="b", marker='o', s=100,
+#                 edgecolors='black', linewidth=2,
+#                 label=f'Right Start', alpha=1.0)
+#
+#
+#     for i in range(sample.shape[0]):
+#         action = sample[i]  # Get the i-th action sequence
+#         # extract left and right arm actions
+#         l_traj_pos = action[:, 0:3] + l_visualize_strat[:3]
+#         r_traj_pos = action[:, 0:3] + r_visualize_strat[:3]
+#         # l_quat_delta = quaternion_from_6d_rotation(action[:, 3:9])
+#         # r_quat_delta = quaternion_from_6d_rotation(action[:, 13:19])
+#         # l_traj_quat = quaternion_multiply(np.broadcast_to(l_visualize_strat[3:7], (traj_len, 4)),
+#         #                                   l_quat_delta).cpu().numpy()
+#         # r_traj_quat = quaternion_multiply(np.broadcast_to(r_visualize_strat[3:7], (traj_len, 4)),
+#         #                                   r_quat_delta).cpu(
+#         #
+#         # ).numpy()
+#
+#         # Plot trajectory positions
+#         alpha = 0.3
+#         color_index = 1
+#         ax1.plot(l_traj_pos[:, 0], l_traj_pos[:, 1], l_traj_pos[:, 2],
+#                  color='b', alpha=alpha, linewidth=1.5)
+#         ax2.plot(r_traj_pos[:, 0], r_traj_pos[:, 1], r_traj_pos[:, 2],
+#                  color='g', alpha=alpha, linewidth=1.5)
+#
+#         # Plot trajectory orientations as quaternions
+#         # Left arm orientation arrow
+#         # l_traj_rot = R.from_quat(l_traj_quat[-1])  # latest quaternion
+#         # l_direction = l_traj_rot.apply([1, 0, 0])  # x-axis direction in base frame
+#         #
+#         # ax1.quiver(l_traj_pos[-1][0], l_traj_pos[-1][1], l_traj_pos[-1][2],
+#         #            l_direction[0], l_direction[1], l_direction[2],
+#         #            length=0.05, normalize=True, color='r')
+#         #
+#         # # Right arm orientation arrow
+#         # r_traj_rot = R.from_quat(r_traj_quat[-1])
+#         # r_direction = r_traj_rot.apply([1, 0, 0])  # x-axis
+#         #
+#         # ax2.quiver(r_traj_pos[-1][0], r_traj_pos[-1][1], r_traj_pos[-1][2],
+#         #            r_direction[0], r_direction[1], r_direction[2],
+#         #            length=0.05, normalize=True, color='r')
+#
+#         plt.tight_layout()
+#
+#         # Save figure
+#         # if save_fig:
+#         #     save_path = self.output_dir / 'trajectory_visualization.png'
+#         #     plt.savefig(save_path, dpi=150, bbox_inches='tight')
+#         #     print(f"\nVisualization saved to: {save_path}")
+#
+#     plt.show()
+
 def vis_action(sample, l_visualize_strat=None, r_visualize_strat=None):
     """
-    Visualize predicted bimanual delta pose.
+    Visualize predicted bimanual delta pose in a single 3D plot.
 
     Args:
-        action (B, T, action_dim): Predicted action tensor, where B is batch size, T is sequence length, and action_dim is the dimension of the action space.
+        sample (B, T, action_dim): Predicted action tensor, where B is batch size,
+                                   T is sequence length, and action_dim is the dimension of the action space.
         l_visualize_strat: target pose for the left arm
         r_visualize_strat: target pose for the right arm
     """
@@ -496,77 +588,196 @@ def vis_action(sample, l_visualize_strat=None, r_visualize_strat=None):
     r_visualize_strat = r_visualize_strat
     traj_len = sample.shape[1]
 
-    # Setup figure
-    fig = plt.figure(figsize=(16, 8))
-    ax1 = fig.add_subplot(121, projection='3d')
-    ax2 = fig.add_subplot(122, projection='3d')
+    # Setup figure with white background
+    fig = plt.figure(facecolor='white', figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_facecolor('white')
 
-    ax1.set_title(f"Left Arm -  Trajectories Distribution")
-    ax2.set_title(f"Right Arm - Trajectories Distribution")
+    ax.set_title("Bimanual Trajectories Distribution", fontsize=14, pad=20)
 
-    for ax in (ax1, ax2):
-        ax.set_xlabel("X")
-        ax.set_ylabel("Y")
-        ax.set_zlabel("Z")
-        ax.grid(True, alpha=0.3)
+    ax.set_xlabel("X", fontsize=15, labelpad=10)
+    ax.set_ylabel("Y", fontsize=15, labelpad=10)
+    ax.set_zlabel("Z", fontsize=15, labelpad=10)
 
-    # Color map for different starting poses
-    colors = plt.cm.rainbow(np.linspace(0, 1))
+    # Light grid
+    ax.grid(True, alpha=0.8, linestyle='--', linewidth=0.5)
 
     # Plot starting poses with larger markers
-    ax1.scatter(*l_visualize_strat[0:3], color="r", marker='o', s=100,
-                edgecolors='black', linewidth=2,
-                label=f'Left Start', alpha=1.0)
-    ax2.scatter(*r_visualize_strat[0:3], color="b", marker='o', s=100,
-                edgecolors='black', linewidth=2,
-                label=f'Right Start', alpha=1.0)
+    # ax.scatter(*l_visualize_strat[0:3], color="deeppink", marker='o', s=50,
+    #            edgecolors='darkred', linewidth=4,
+    #            label='Left Start', alpha=1.0)
+    # ax.scatter(*r_visualize_strat[0:3], color="green", marker='o', s=50,
+    #            edgecolors='darkgreen', linewidth=4,
+    #            label='Right Start', alpha=1.0)
 
-
+    # Plot all trajectories
     for i in range(sample.shape[0]):
         action = sample[i]  # Get the i-th action sequence
-        # extract left and right arm actions
+
+        # Extract left and right arm actions
         l_traj_pos = action[:, 0:3] + l_visualize_strat[:3]
         r_traj_pos = action[:, 0:3] + r_visualize_strat[:3]
-        # l_quat_delta = quaternion_from_6d_rotation(action[:, 3:9])
-        # r_quat_delta = quaternion_from_6d_rotation(action[:, 13:19])
-        # l_traj_quat = quaternion_multiply(np.broadcast_to(l_visualize_strat[3:7], (traj_len, 4)),
-        #                                   l_quat_delta).cpu().numpy()
-        # r_traj_quat = quaternion_multiply(np.broadcast_to(r_visualize_strat[3:7], (traj_len, 4)),
-        #                                   r_quat_delta).cpu(
-        #
-        # ).numpy()
 
         # Plot trajectory positions
-        alpha = 0.3
-        color_index = 1
-        ax1.plot(l_traj_pos[:, 0], l_traj_pos[:, 1], l_traj_pos[:, 2],
-                 color='b', alpha=alpha, linewidth=1.5)
-        ax2.plot(r_traj_pos[:, 0], r_traj_pos[:, 1], r_traj_pos[:, 2],
-                 color='g', alpha=alpha, linewidth=1.5)
+        # Left arm in pink
+        ax.plot(l_traj_pos[:, 0], l_traj_pos[:, 1], l_traj_pos[:, 2],
+                color='pink', alpha=1.0, linewidth=1.7)
 
-        # Plot trajectory orientations as quaternions
-        # Left arm orientation arrow
-        # l_traj_rot = R.from_quat(l_traj_quat[-1])  # latest quaternion
-        # l_direction = l_traj_rot.apply([1, 0, 0])  # x-axis direction in base frame
-        #
-        # ax1.quiver(l_traj_pos[-1][0], l_traj_pos[-1][1], l_traj_pos[-1][2],
-        #            l_direction[0], l_direction[1], l_direction[2],
-        #            length=0.05, normalize=True, color='r')
-        #
-        # # Right arm orientation arrow
-        # r_traj_rot = R.from_quat(r_traj_quat[-1])
-        # r_direction = r_traj_rot.apply([1, 0, 0])  # x-axis
-        #
-        # ax2.quiver(r_traj_pos[-1][0], r_traj_pos[-1][1], r_traj_pos[-1][2],
-        #            r_direction[0], r_direction[1], r_direction[2],
-        #            length=0.05, normalize=True, color='r')
+        # Right arm in green
+        ax.plot(r_traj_pos[:, 0], r_traj_pos[:, 1], r_traj_pos[:, 2],
+                color='lightgreen', alpha=1.0, linewidth=1.7)
 
-        plt.tight_layout()
+    # Make panes white/transparent
+    ax.xaxis.pane.fill = True
+    ax.yaxis.pane.fill = True
+    ax.zaxis.pane.fill = True
+    ax.xaxis.pane.set_facecolor('#E8E8E8')
+    ax.yaxis.pane.set_facecolor('#E8E8E8')
+    ax.zaxis.pane.set_facecolor('#E8E8E8')
+    ax.xaxis.pane.set_alpha(0.8)
 
-        # Save figure
-        # if save_fig:
-        #     save_path = self.output_dir / 'trajectory_visualization.png'
-        #     plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        #     print(f"\nVisualization saved to: {save_path}")
+    # Set pane edges to light gray
+    ax.xaxis.pane.set_edgecolor('lightgray')
+    ax.yaxis.pane.set_edgecolor('lightgray')
+    ax.zaxis.pane.set_edgecolor('lightgray')
+    ax.xaxis.line.set_color('black')
+    ax.yaxis.line.set_color('black')
+    ax.zaxis.line.set_color('black')
+    ax.xaxis.line.set_linewidth(1.0)
+    ax.yaxis.line.set_linewidth(1.0)
+    ax.zaxis.line.set_linewidth(1.0)
+    # ax.xaxis.pane.set_edgecolor('black')
+    # ax.xaxis.pane.set_linewidth(2.5)
 
+    # Set tick label font size for all axes
+    ax.tick_params(axis='x', labelsize=12)
+    ax.tick_params(axis='y', labelsize=12)
+    ax.tick_params(axis='z', labelsize=12)
+    ax.tick_params(axis='x', labelsize=12, width=2, length=6, colors='black')
+
+    # Add legend
+    ax.legend(loc='upper right', fontsize=15, framealpha=0.9)
+
+    # set fixed view angle
+    ax.view_init(elev=15, azim=-70)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def vis_action_with_filter(sample, l_visualize_strat=None, r_visualize_strat=None):
+    """
+    Visualize predicted bimanual delta pose in a single 3D plot.
+
+    Args:
+        sample (B, T, action_dim): Predicted action tensor, where B is batch size,
+                                   T is sequence length, and action_dim is the dimension of the action space.
+        l_visualize_strat: target pose for the left arm
+        r_visualize_strat: target pose for the right arm
+    """
+    if isinstance(sample, torch.Tensor):
+        sample = sample.detach().cpu().numpy()
+
+    l_visualize_strat = l_visualize_strat
+    r_visualize_strat = r_visualize_strat
+    traj_len = sample.shape[1]
+
+    # Setup figure with white background
+    fig = plt.figure(facecolor='white', figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_facecolor('white')
+
+    ax.set_title("Bimanual Trajectories Distribution", fontsize=14, pad=20)
+
+    ax.set_xlabel("X", fontsize=15, labelpad=10)
+    ax.set_ylabel("Y", fontsize=15, labelpad=10)
+    ax.set_zlabel("Z", fontsize=15, labelpad=10)
+
+    # Light grid
+    ax.grid(True, alpha=0.8, linestyle='--', linewidth=0.5)
+
+    # ========== 定义X轴过滤范围 ==========
+    x_ranges = [(-0.17, -0.18), (0.17, 0.18)]
+    # ====================================
+
+    # 用于统计过滤的轨迹数量
+    filtered_count = 0
+    total_count = sample.shape[0]
+
+    # Plot all trajectories
+    for i in range(sample.shape[0]):
+        action = sample[i]  # Get the i-th action sequence
+
+        # Extract left and right arm actions
+        l_traj_pos = action[:, 0:3] + l_visualize_strat[:3]
+        r_traj_pos = action[:, 0:3] + r_visualize_strat[:3]
+
+        # ========== 检查轨迹是否在X范围内 ==========
+        # 检查左臂轨迹的X坐标
+        l_x_coords = l_traj_pos[:, 0]
+        l_in_range = any(
+            any((x >= x_min) and (x <= x_max) for x in l_x_coords)
+            for x_min, x_max in x_ranges
+        )
+
+        # 检查右臂轨迹的X坐标
+        r_x_coords = r_traj_pos[:, 0]
+        r_in_range = any(
+            any((x >= x_min) and (x <= x_max) for x in r_x_coords)
+            for x_min, x_max in x_ranges
+        )
+
+        # 如果左臂或右臂任一在范围内，则绘制该轨迹
+        if not (l_in_range or r_in_range):
+            continue  # 跳过不在范围内的轨迹
+        # ==========================================
+
+        filtered_count += 1
+
+        # Plot trajectory positions
+        # Left arm in pink
+        ax.plot(l_traj_pos[:, 0], l_traj_pos[:, 1], l_traj_pos[:, 2],
+                color='pink', alpha=1.0, linewidth=1.7)
+
+        # Right arm in green
+        ax.plot(r_traj_pos[:, 0], r_traj_pos[:, 1], r_traj_pos[:, 2],
+                color='lightgreen', alpha=1.0, linewidth=1.7)
+
+    # 打印过滤统计信息
+    print(f"显示轨迹数: {filtered_count}/{total_count}")
+    print(f"X轴过滤范围: {x_ranges}")
+
+    # Make panes white/transparent
+    ax.xaxis.pane.fill = True
+    ax.yaxis.pane.fill = True
+    ax.zaxis.pane.fill = True
+    ax.xaxis.pane.set_facecolor('#E8E8E8')
+    ax.yaxis.pane.set_facecolor('#E8E8E8')
+    ax.zaxis.pane.set_facecolor('#E8E8E8')
+    ax.xaxis.pane.set_alpha(0.8)
+
+    # Set pane edges to light gray
+    ax.xaxis.pane.set_edgecolor('lightgray')
+    ax.yaxis.pane.set_edgecolor('lightgray')
+    ax.zaxis.pane.set_edgecolor('lightgray')
+    ax.xaxis.line.set_color('black')
+    ax.yaxis.line.set_color('black')
+    ax.zaxis.line.set_color('black')
+    ax.xaxis.line.set_linewidth(1.0)
+    ax.yaxis.line.set_linewidth(1.0)
+    ax.zaxis.line.set_linewidth(1.0)
+
+    # Set tick label font size for all axes
+    ax.tick_params(axis='x', labelsize=12)
+    ax.tick_params(axis='y', labelsize=12)
+    ax.tick_params(axis='z', labelsize=12)
+    ax.tick_params(axis='x', labelsize=12, width=2, length=6, colors='black')
+
+    # Add legend
+    ax.legend(loc='upper right', fontsize=15, framealpha=0.9)
+
+    # set fixed view angle
+    ax.view_init(elev=15, azim=-70)
+
+    plt.tight_layout()
     plt.show()

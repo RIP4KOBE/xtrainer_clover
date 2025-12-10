@@ -22,7 +22,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from omegaconf import OmegaConf
 from omegaconf import  open_dict
-from vis_utils import vis_action
+from vis_utils import vis_action, vis_action_with_filter
 from typing import Dict, Union
 from ModelTrain.dp.transform_utils import quat_multiply
 from ModelTrain.dp.bimanual_motion_prior.base_workspace import BaseWorkspace
@@ -96,6 +96,9 @@ def eval_policy(policy: BaseLowdimPolicy, batch_size=128, l_visualize_strat=None
     print("Time taken for prediction:", time1 - time0, "seconds")
 
     vis_action(action, l_visualize_strat, r_visualize_strat)
+    # vis_action_with_filter(action, l_visualize_strat, r_visualize_strat)
+
+
 
 @click.command()
 @click.option('-c', '--checkpoint', default='/home/zhuoli/dobot_xtrainer/model/bimanual_motion_prior/2025.06.27/15.19.31_train_bimanual_motion_prior/checkpoints/latest.ckpt', required=True)
