@@ -41,8 +41,8 @@ class Args:
     agent_name: str = "dp"
     act_ckpt_path: str = "./ckpt/act/tidying_up_bowls_abcefg_mix_0925"
     # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_6d_delta_normalization_20250619/last.ckpt"
-    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_absolute_6d_normalization_20250619/last.ckpt"
-    dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/multimodal_dp_plate_wiping_eef_absolute_6d_20250626/last.ckpt"
+    dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/dp_plate_wiping_eef_absolute_6d_normalization_20250619/last.ckpt"
+    # dp_ckpt_path: str = "/media/zhuoli/8ECE-77DB/xtrainer/model/DP/multimodal_dp_plate_wiping_eef_absolute_6d_20250626/last.ckpt"
     dp_model = None
     act_model = None
     obj_correction = False
@@ -361,26 +361,35 @@ def main(args):
 
                 # ecot_result = ecot_reasoner.generate_ecot_reasoning()
                 start_time = time.time()
-                if not llm_called:
-                    ecot_result = run_llm_reasoning(args.mllm_config_path, args.ecot_example_path)
-
-                    ecot_reasoning = ecot_result['reasoning']
-                    bimanual_cotegory = ecot_result['bimanual_category']
-                    language_reward = ecot_result['reward_function']
-
-                    print("ecot_reasoning:", ecot_reasoning)
-                    print("bimanual_cotegory:", bimanual_cotegory)
-                    print("language_reward:", language_reward)
+                # if not llm_called:
+                #     ecot_result = run_llm_reasoning(args.mllm_config_path, args.ecot_example_path)
+                #
+                #     ecot_reasoning = ecot_result['reasoning']
+                #     bimanual_cotegory = ecot_result['bimanual_category']
+                #     language_reward = ecot_result['reward_function']
+                #
+                #     print("ecot_reasoning:", ecot_reasoning)
+                #     print("bimanual_cotegory:", bimanual_cotegory)
+                #     print("language_reward:", language_reward)
 
 
                 # bimanual diffusion modulation
-                # print("start bimanual diffusion modulation...")
+                print("start bimanual diffusion modulation...")
                 if args.pred_eef_absolute_6d:
+                    # MLLM-based online bimanual modulation
+                    # prediction, modulation_finished = dp_model.modulate(dp_observation,last_action=last_eef_action,
+                    #                                                     bimanual_cotegory=bimanual_cotegory,
+                    #                                                     reward=language_reward
+                    #                                                     )  #
+                    # llm_called = True
+
+                    # Non-LLM bimanual modulation evaluation
+                    bimanual_cotegory = "sym"
                     prediction, modulation_finished = dp_model.modulate(dp_observation,last_action=last_eef_action,
                                                                         bimanual_cotegory=bimanual_cotegory,
-                                                                        reward=language_reward
-                                                                        )  # Use modulated trajectory
-                    llm_called = True
+                                                                        reward=None
+                                                                        )
+
                     end_time = time.time()
 
                     print("overall bimanual adaptation time consumed:", end_time - start_time)
@@ -519,7 +528,7 @@ def main(args):
         if args.agent_name == "dp" and mode == "modulate" and modulation_finished:
             print("Trajectory execution finished. Waiting for next user input...")
             running = False
-            llm_called = False
+            # llm_called = False
 
 
     thread_run = False

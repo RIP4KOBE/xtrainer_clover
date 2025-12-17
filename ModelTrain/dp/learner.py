@@ -868,10 +868,10 @@ class DiffusionPolicy:
 
         constraints = None
         if bimanual_category in ['sym', 'asym_l_dom', 'asym_r_dom']:
-            constraints =  self.position_coordination_constraints
+            # constraints =  self.position_coordination_constraints
             # constraints =  self.coordination_constraints
             # constraints =  self.left_reach_constraint
-            # constraints =  self.bimanual_reach_constraint
+            constraints =  self.bimanual_reach_constraint
 
         with torch.no_grad():
             features = []
@@ -1232,7 +1232,6 @@ class DiffusionPolicy:
     #     keypoints = np.array(transformed_keypoints)  # shape: (N, 3)
     #     print("keypoints for NBCFs", keypoints)# Shape: (5, 3)
 
-        reward_fn = self._create_callable_reward(reward_fn)
 
 
         # <editor-fold desc="utils">
@@ -1930,6 +1929,7 @@ class DiffusionPolicy:
         # </editor-fold>
 
         if reward_fn is not None:
+            reward_fn = self._create_callable_reward(reward_fn)
             return reward_fn
         else:
             return left_arm_height_upward
