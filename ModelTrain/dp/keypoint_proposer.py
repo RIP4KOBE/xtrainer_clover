@@ -16,6 +16,7 @@ import numpy as np
 import cv2
 import json
 import open3d as o3d
+from matplotlib import pyplot as plt
 
 class KeypointProposer:
     def __init__(self, config):
@@ -38,12 +39,324 @@ class KeypointProposer:
             [0, 0, 0, 1]
         ))
 
-    def get_keypoints(self, rgb, points, masks, rotate_text_180=False):
+    def visualize_dino_features(self, rgb, features_flat, shape_info):
+        """
+        Visualize DINOv2 features using PCA
+        Args:
+            rgb: original RGB image [H, W, 3]
+            features_flat: flattened features [H*W, feature_dim]
+            shape_info: dict containing img_h, img_w
+        Returns:
+            feature_rgb: RGB visualization of features [H, W, 3]
+        """
+        img_h = shape_info['img_h']
+        img_w = shape_info['img_w']
+
+        # Step 1: PCA降维到3维
+        features_flat = features_flat.double()
+        u, s, v = torch.pca_lowrank(features_flat, q=3, center=True)
+        features_pca = torch.mm(features_flat, v[:, :3])  # [H*W, 3]
+
+        # Step 2: 归一化到 [0, 1]
+        features_pca = (features_pca - features_pca.min(0)[0]) / (
+                features_pca.max(0)[0] - features_pca.min(0)[0] + 1e-8
+        )
+
+        # Step 3: 转换为图像格式
+        feature_rgb = features_pca.reshape(img_h, img_w, 3).cpu().numpy()
+        feature_rgb = (feature_rgb * 255).astype(np.uint8)
+
+        # Step 4: 可选：与原图混合
+        alpha = 0.6  # 特征图权重
+        blended = cv2.addWeighted(rgb, 1 - alpha, feature_rgb, alpha, 0)
+
+        return feature_rgb, blended
+
+    def visualize_mask_features(self, rgb, features_flat, masks):
+        """
+        为每个mask区域可视化DINOv2特征
+        Args:
+            rgb: 原始RGB图像 [H, W, 3]
+            features_flat: 扁平化特征 [H*W, feature_dim]
+            masks: SAM分割的mask列表
+        Returns:
+            feature_map: 特征可视化图 [H, W, 3]
+        """
+        feature_map = np.zeros_like(rgb)
+        h, w = rgb.shape[:2]
+
+        # 为每个mask分配随机颜色（可选，用于区分不同mask）
+        np.random.seed(42)
+
+        valid_mask_count = 0
+        for mask_id, binary_mask in enumerate(masks):
+            # 获取该mask的特征
+            mask_flat = binary_mask.reshape(-1)
+            mask_features = features_flat[mask_flat]
+
+            # 跳过太小的mask
+            if len(mask_features) < 10:
+                print(f"Skipping mask {mask_id}: too few pixels ({len(mask_features)})")
+                continue
+
+            try:
+                # PCA降维到3维
+                mask_features = mask_features.double()
+                u, s, v = torch.pca_lowrank(mask_features, q=3, center=True)
+                features_pca = torch.mm(mask_features, v[:, :3])
+
+                # 归一化到 [0, 1]
+                features_pca = (features_pca - features_pca.min(0)[0]) / (
+                        features_pca.max(0)[0] - features_pca.min(0)[0] + 1e-8
+                )
+
+                # 转换为RGB值 [0, 255]
+                mask_rgb = (features_pca.cpu().numpy() * 255).astype(np.uint8)
+
+                # 映射回图像
+                feature_map[binary_mask] = mask_rgb
+                valid_mask_count += 1
+
+            except Exception as e:
+                print(f"Error processing mask {mask_id}: {e}")
+                continue
+
+        print(f"Successfully visualized {valid_mask_count}/{len(masks)} masks")
+        return feature_map
+
+    def _display_mask_features(self, rgb, mask_feature_map, masks):
+        """
+        显示和保存mask特征可视化结果
+        """
+        import matplotlib.pyplot as plt
+
+        # 创建对比图
+        fig, axes = plt.subplots(2, 2, figsize=(15, 15))
+
+        # 原始图像
+        axes[0, 0].imshow(cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB))
+        axes[0, 0].set_title('Original Image', fontsize=14)
+        axes[0, 0].axis('off')
+
+        # Mask边界叠加
+        mask_overlay = rgb.copy()
+        for mask in masks:
+            color = np.random.randint(0, 255, 3).tolist()
+            contours, _ = cv2.findContours(
+                mask.astype(np.uint8),
+                cv2.RETR_EXTERNAL,
+                cv2.CHAIN_APPROX_SIMPLE
+            )
+            cv2.drawContours(mask_overlay, contours, -1, color, 2)
+        axes[0, 1].imshow(cv2.cvtColor(mask_overlay, cv2.COLOR_BGR2RGB))
+        axes[0, 1].set_title(f'SAM Masks ({len(masks)} masks)', fontsize=14)
+        axes[0, 1].axis('off')
+
+        # 特征可视化
+        axes[1, 0].imshow(mask_feature_map)
+        axes[1, 0].set_title('DINOv2 Features per Mask', fontsize=14)
+        axes[1, 0].axis('off')
+
+        # 混合图像
+        alpha = 0.5
+        blended = cv2.addWeighted(rgb, 1 - alpha, mask_feature_map, alpha, 0)
+        axes[1, 1].imshow(cv2.cvtColor(blended, cv2.COLOR_BGR2RGB))
+        axes[1, 1].set_title('Blended (Original + Features)', fontsize=14)
+        axes[1, 1].axis('off')
+
+        plt.tight_layout()
+
+        # 保存
+        save_path = os.path.join(self.save_dir, 'mask_features_visualization.png')
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved visualization to {save_path}")
+
+        plt.show()
+        plt.close()
+
+        # 单独保存特征图
+        cv2.imwrite(
+            os.path.join(self.save_dir, 'mask_features_only.png'),
+            cv2.cvtColor(mask_feature_map, cv2.COLOR_RGB2BGR)
+        )
+
+    def visualize_features_tsne(self, rgb, features_flat, perplexity=30,
+                                n_iter=1000, learning_rate=200):
+        """
+        使用t-SNE将高维特征降维到2D并可视化为RGB图像
+        Args:
+            rgb: 原始RGB图像 [H, W, 3]
+            features_flat: 扁平化特征 [H*W, feature_dim]
+            perplexity: t-SNE困惑度参数 (5-50)
+            n_iter: 迭代次数
+            learning_rate: 学习率
+        Returns:
+            tsne_map: t-SNE可视化图 [H, W, 3]
+        """
+        from sklearn.manifold import TSNE
+        import time
+
+        h, w = rgb.shape[:2]
+        n_samples = h * w
+
+        print(f"Running t-SNE on {n_samples} samples with {features_flat.shape[1]} dimensions...")
+        print(f"Parameters: perplexity={perplexity}, n_iter={n_iter}, learning_rate={learning_rate}")
+
+        # 转换为numpy
+        features_np = features_flat.cpu().numpy()
+
+        # 可选: 降采样以加速 (如果图像太大)
+        if n_samples > 50000:
+            print(f"Warning: Large image ({n_samples} pixels). Consider downsampling.")
+            downsample_rate = int(np.sqrt(n_samples / 50000))
+            indices = np.arange(0, n_samples, downsample_rate)
+            features_sampled = features_np[indices]
+            print(f"Downsampled to {len(indices)} samples (rate: 1/{downsample_rate})")
+        else:
+            features_sampled = features_np
+            indices = None
+
+        # 运行t-SNE
+        start_time = time.time()
+        tsne = TSNE(
+            n_components=3,  # 降维到3D用于RGB可视化
+            perplexity=perplexity,
+            n_iter=n_iter,
+            learning_rate=learning_rate,
+            random_state=42,
+            verbose=1
+        )
+        features_tsne = tsne.fit_transform(features_sampled)
+        elapsed = time.time() - start_time
+        print(f"t-SNE completed in {elapsed:.2f} seconds")
+
+        # 如果进行了降采样，需要插值回原始分辨率
+        if indices is not None:
+            from scipy.interpolate import griddata
+
+            # 创建坐标网格
+            yi, xi = np.unravel_index(indices, (h, w))
+            points = np.column_stack((yi, xi))
+
+            # 目标网格
+            grid_y, grid_x = np.mgrid[0:h, 0:w]
+
+            # 对每个通道进行插值
+            features_tsne_full = np.zeros((h * w, 3))
+            for i in range(3):
+                features_tsne_full[:, i] = griddata(
+                    points, features_tsne[:, i],
+                    (grid_y.ravel(), grid_x.ravel()),
+                    method='linear'
+                )
+            features_tsne = features_tsne_full
+
+        # 归一化到 [0, 1]
+        features_tsne = (features_tsne - features_tsne.min(axis=0)) / (
+                features_tsne.max(axis=0) - features_tsne.min(axis=0) + 1e-8
+        )
+
+        # 转换为RGB值 [0, 255] 并reshape
+        tsne_map = (features_tsne * 255).astype(np.uint8).reshape(h, w, 3)
+
+        return tsne_map
+
+    def _display_tsne(self, rgb, tsne_map, save_name='tsne_visualization.png'):
+        """
+        显示和保存t-SNE可视化结果
+        """
+        import matplotlib.pyplot as plt
+
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+
+        # 原始图像
+        axes[0].imshow(cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB))
+        axes[0].set_title('Original Image', fontsize=14)
+        axes[0].axis('off')
+
+        # t-SNE特征图
+        axes[1].imshow(tsne_map)
+        axes[1].set_title('t-SNE Feature Visualization', fontsize=14)
+        axes[1].axis('off')
+
+        # 混合图像
+        alpha = 0.5
+        blended = cv2.addWeighted(rgb, 1 - alpha, tsne_map, alpha, 0)
+        axes[2].imshow(cv2.cvtColor(blended, cv2.COLOR_BGR2RGB))
+        axes[2].set_title(f'Blended (alpha={alpha})', fontsize=14)
+        axes[2].axis('off')
+
+        plt.tight_layout()
+
+        # 保存
+        save_path = os.path.join(self.save_dir, save_name)
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved t-SNE visualization to {save_path}")
+
+        plt.show()
+        plt.close()
+
+        # 单独保存特征图
+        cv2.imwrite(
+            os.path.join(self.save_dir, 'tsne_features_only.png'),
+            cv2.cvtColor(tsne_map, cv2.COLOR_RGB2BGR)
+        )
+
+    def get_keypoints(self, rgb, points, masks, rotate_text_180=False, visualize_dino_features=False, vis_mask_features=False, visualize_tsne=False):
         # preprocessing
         transformed_rgb, rgb, points, masks, shape_info = self._preprocess(rgb, points, masks)
 
         # get features
         features_flat = self._get_features(transformed_rgb, shape_info)
+
+        if visualize_dino_features:
+            # 可视化特征
+            feature_rgb, blended = self.visualize_dino_features(
+                rgb, features_flat, shape_info
+            )
+
+            # 显示结果
+            fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+            axes[0].imshow(cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB))
+            axes[0].set_title('Original Image')
+            axes[0].axis('off')
+
+            axes[1].imshow(feature_rgb)
+            axes[1].set_title('DINOv2 Features (PCA)')
+            axes[1].axis('off')
+
+            axes[2].imshow(cv2.cvtColor(blended, cv2.COLOR_BGR2RGB))
+            axes[2].set_title('Blended')
+            axes[2].axis('off')
+
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.save_dir, 'feature_visualization.png'),
+                        dpi=150, bbox_inches='tight')
+            plt.show()
+
+            # 保存特征图
+            cv2.imwrite(
+                os.path.join(self.save_dir, 'dino_features.png'),
+                cv2.cvtColor(feature_rgb, cv2.COLOR_RGB2BGR)
+            )
+
+        if vis_mask_features:
+            # 可视化每个mask的特征
+            mask_feature_map = self.visualize_mask_features(
+                rgb, features_flat, masks
+            )
+
+            # 显示结果
+            self._display_mask_features(rgb, mask_feature_map, masks)
+
+        if visualize_tsne:
+            # 基础t-SNE可视化
+            tsne_map = self.visualize_features_tsne(
+                rgb, features_flat,
+                perplexity=30,
+                n_iter=1000
+            )
+            self._display_tsne(rgb, tsne_map)
 
         # for each mask, cluster in feature space to get meaningful regions, and uske their centers as keypoint candidates
         candidate_keypoints, candidate_pixels, candidate_rigid_group_ids = self._cluster_features(points, features_flat,
@@ -466,7 +779,7 @@ class KeypointProposer:
         mask_generator = SamAutomaticMaskGenerator(sam_model)
         masks = mask_generator.generate(base_rgb)
 
-        candidate_keypoints, projected_img = self.get_keypoints(base_rgb, points, masks, rotate_text_180=True)
+        candidate_keypoints, projected_img = self.get_keypoints(base_rgb, points, masks, rotate_text_180=True, visualize_dino_features=True, vis_mask_features=True, visualize_tsne=False)
         print("Candidate Keypoints:", candidate_keypoints)
 
         if visualize_projection:

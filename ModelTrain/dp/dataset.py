@@ -223,6 +223,64 @@ def unnormalize_6d_pose(normalized, stats):
     #         original[i] = unnormalize_data(normalized[i], stats)
     # return original
 
+
+def unnormalize_6d_pose_batch(normalized, stats):
+    """
+    Batch denormalization for dual-arm pose data with prediction horizon
+
+    Args:
+        normalized: Normalized pose data of shape (batch_size, pred_horizon, 20)
+        stats: Statistics dictionary used for normalization
+
+    Returns:
+        Denormalized pose data in original scale with same shape (batch_size, pred_horizon, 20)
+    """
+    assert normalized.shape[2] == 20, f"Input action_dim should be 20, got {normalized.shape[2]}"
+
+    batch_size, pred_horizon, action_dim = normalized.shape
+
+    # Reshape to (batch_size * pred_horizon, 20) for processing
+    normalized_reshaped = normalized.reshape(-1, action_dim)
+
+    original = np.zeros_like(normalized_reshaped)
+
+    for arm_slice in [LEFT_ARM_6D_INDICES, RIGHT_ARM_6D_INDICES]:
+        norm_arm = normalized_reshaped[:, arm_slice]
+        arm_stats_min = stats["min"][arm_slice]  # shape (10,)
+        arm_stats_max = stats["max"][arm_slice]  # shape (10,)
+
+        # Position denormalization (first 3 dimensions)
+        pos_indices = slice(0, 3)
+        norm_pos = norm_arm[:, pos_indices]
+        pos_stats = {
+            "min": arm_stats_min[pos_indices],
+            "max": arm_stats_max[pos_indices]
+        }
+        original_pos = unnormalize_data(norm_pos, pos_stats)
+
+        # Rotation (dimensions 3-9, no denormalization needed)
+        rot_indices = slice(3, 9)
+        original_rot = norm_arm[:, rot_indices]
+
+        # Gripper denormalization (last dimension)
+        gripper_index = 9
+        norm_gripper = norm_arm[:, gripper_index]
+        gripper_stats = {
+            "min": arm_stats_min[gripper_index],
+            "max": arm_stats_max[gripper_index]
+        }
+        original_gripper = unnormalize_data(norm_gripper, gripper_stats)
+
+        original[:, arm_slice] = np.hstack([
+            original_pos,
+            original_rot,
+            original_gripper.reshape(-1, 1)
+        ])
+
+    # Reshape back to (batch_size, pred_horizon, 20)
+    return original.reshape(batch_size, pred_horizon, action_dim)
+
+
 class MemmapLoader:
     def __init__(self, path):
         with open(os.path.join(path, "metadata.pkl"), "rb") as f:

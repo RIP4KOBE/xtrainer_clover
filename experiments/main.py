@@ -31,7 +31,7 @@ from ModelTrain.dp.utils import sixd_to_rotation_vector
 from scripts.manipulate_utils import load_ini_data_camera
 
 # from ModelTrain.module.model_module import Imitate_Model
-from ModelTrain.dp.train_dp import Agent as DPAgent
+from ModelTrain.dp.vis_utils import load_trajectory_data
 
 @dataclass
 class Args:
@@ -385,10 +385,34 @@ def main(args):
 
                     # Non-LLM bimanual modulation evaluation
                     bimanual_cotegory = "sym"
-                    prediction, modulation_finished = dp_model.modulate(dp_observation,last_action=last_eef_action,
+                    initial_bimanual_traj = load_trajectory_data('/home/zhuoli/xtrainer_clover/assets/traj_data/bimanual_traj_001_manipulated.pkl',
+        format='pkl'
+    )
+
+                    # traj_origin = np.concatenate([
+                    #     initial_bimanual_traj['left_eef_init_pos'],
+                    #     last_eef_action[3:10],
+                    #     initial_bimanual_traj['right_eef_init_pos'],
+                    #     last_eef_action[13:20]
+                    # ], axis=0)
+
+                    traj_origin = np.concatenate([
+                        np.array([-0.13, -0.41, 0.085]),
+                        last_eef_action[3:10],
+                        np.array([0.16, -0.41, 0.085]),
+                        last_eef_action[13:20]
+                    ])
+
+
+                    prediction, modulation_finished = dp_model.modulate(dp_observation,last_action=traj_origin,
                                                                         bimanual_cotegory=bimanual_cotegory,
                                                                         reward=None
                                                                         )
+
+                    # prediction, modulation_finished = dp_model.modulate(dp_observation,last_action=last_eef_action,
+                    #                                                     bimanual_cotegory=bimanual_cotegory,
+                    #                                                     reward=None
+                    #                                                     )
 
                     end_time = time.time()
 

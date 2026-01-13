@@ -423,8 +423,12 @@ class Agent:
             data['touch']: torch.tensor (1,6)
             data['pos']: torch.tensor (1,24)
         """
-        pred = self.policy.forward(
-            self.stats, obs_deque, num_diffusion_iters=num_diffusion_iters
+        # pred = self.policy.forward(
+        #     self.stats, obs_deque, num_diffusion_iters=num_diffusion_iters
+        # )
+        #
+        pred = self.policy.forward_vis(
+            self.stats, obs_deque, num_diffusion_iters=num_diffusion_iters, vis_traj=False
         )
         return pred
 
